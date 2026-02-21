@@ -26,6 +26,7 @@ swiftc \
     -framework Cocoa \
     -framework CoreText \
     -o terminal \
+    Sources/main.swift \
     Sources/AppDelegate.swift \
     Sources/TerminalWindowController.swift \
     Sources/TerminalViewController.swift \

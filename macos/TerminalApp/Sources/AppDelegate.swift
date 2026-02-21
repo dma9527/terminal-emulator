@@ -1,7 +1,8 @@
 import Cocoa
 
-@main
 class AppDelegate: NSObject, NSApplicationDelegate {
+    var windowController: TerminalWindowController?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Create main menu
         let mainMenu = NSMenu()
@@ -14,8 +15,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         appMenuItem.submenu = appMenu
         appMenu.addItem(withTitle: "About Terminal", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
         appMenu.addItem(NSMenuItem.separator())
-        appMenu.addItem(withTitle: "Preferences…", action: #selector(showPreferences), keyEquivalent: ",")
-        appMenu.addItem(NSMenuItem.separator())
         appMenu.addItem(withTitle: "Quit Terminal", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
 
         // File menu
@@ -23,45 +22,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         mainMenu.addItem(fileMenuItem)
         let fileMenu = NSMenu(title: "File")
         fileMenuItem.submenu = fileMenu
-        fileMenu.addItem(withTitle: "New Tab", action: #selector(newTab), keyEquivalent: "t")
-        fileMenu.addItem(withTitle: "Close Tab", action: #selector(closeTab), keyEquivalent: "w")
-
-        // Shell menu
-        let shellMenuItem = NSMenuItem()
-        mainMenu.addItem(shellMenuItem)
-        let shellMenu = NSMenu(title: "Shell")
-        shellMenuItem.submenu = shellMenu
-        shellMenu.addItem(withTitle: "Split Horizontally", action: #selector(splitHorizontal), keyEquivalent: "d")
-        shellMenu.addItem(withTitle: "Split Vertically", action: #selector(splitVertical), keyEquivalent: "D")
-
-        // View menu
-        let viewMenuItem = NSMenuItem()
-        mainMenu.addItem(viewMenuItem)
-        let viewMenu = NSMenu(title: "View")
-        viewMenuItem.submenu = viewMenu
-        viewMenu.addItem(withTitle: "Increase Font Size", action: #selector(increaseFontSize), keyEquivalent: "+")
-        viewMenu.addItem(withTitle: "Decrease Font Size", action: #selector(decreaseFontSize), keyEquivalent: "-")
+        fileMenu.addItem(withTitle: "New Tab", action: #selector(TerminalWindowController.addNewTab), keyEquivalent: "t")
+        fileMenu.addItem(withTitle: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
 
         // Create initial window
-        let window = TerminalWindowController()
-        window.showWindow(nil)
+        windowController = TerminalWindowController()
+        windowController?.showWindow(nil)
+
+        // Bring to front
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         return true
     }
-
-    @objc func showPreferences() {
-        // TODO: Phase 2 preferences window
-    }
-
-    @objc func newTab() {
-        NSApp.keyWindow?.windowController?.performSelector(onMainThread: #selector(TerminalWindowController.addNewTab), with: nil, waitUntilDone: false)
-    }
-
-    @objc func closeTab() {}
-    @objc func splitHorizontal() {}
-    @objc func splitVertical() {}
-    @objc func increaseFontSize() {}
-    @objc func decreaseFontSize() {}
 }
