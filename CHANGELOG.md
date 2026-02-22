@@ -42,3 +42,4 @@ All notable changes to this project will be documented in this file.
 - macOS app: Metal GPU rendering via wgpu (CAMetalLayer + CVDisplayLink), with CoreGraphics fallback
 - FFI: `term_session_init_gpu`, `term_session_render_gpu`, `term_session_resize_gpu` for native GPU surface
 - Terminal handler: OSC 7 (working directory), OSC 133 (shell integration), OSC 52 (clipboard) dispatch (3 tests)
+- VT compatibility test suite: 33 automated vttest-style checks covering cursor movement, erase, scroll, SGR, alt screen, DSR, tabs, insert/delete, wrap, DEC modes, reset, NEL/IND, DECALN, REP
