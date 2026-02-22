@@ -16,6 +16,9 @@ pub mod security;
 pub mod image;
 pub mod pane;
 pub mod plugin;
+pub mod shell_integration;
+pub mod keybinding;
+pub mod portable;
 
 #[no_mangle]
 pub extern "C" fn libterm_version() -> *const std::ffi::c_char {
