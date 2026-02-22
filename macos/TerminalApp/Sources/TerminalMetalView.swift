@@ -23,29 +23,30 @@ class TerminalMetalView: NSView {
         guard let session = session else { return }
 
         var bytes: [UInt8]?
+        let appMode = term_session_cursor_keys_app(session) != 0
 
         if event.modifierFlags.contains(.control), let chars = event.charactersIgnoringModifiers {
             if let scalar = chars.unicodeScalars.first,
                scalar.value >= 0x61 && scalar.value <= 0x7a {
-                bytes = [UInt8(scalar.value - 0x60)]  // Ctrl+a = 0x01, etc.
+                bytes = [UInt8(scalar.value - 0x60)]
             } else if chars == "c" || chars == "C" {
-                bytes = [0x03]  // Ctrl+C
+                bytes = [0x03]
             }
         } else {
             switch event.keyCode {
-            case 36:  bytes = [0x0d]                    // Return
-            case 51:  bytes = [0x7f]                    // Backspace
-            case 48:  bytes = [0x09]                    // Tab
-            case 53:  bytes = [0x1b]                    // Escape
-            case 126: bytes = Array("\u{1b}[A".utf8)    // Up
-            case 125: bytes = Array("\u{1b}[B".utf8)    // Down
-            case 124: bytes = Array("\u{1b}[C".utf8)    // Right
-            case 123: bytes = Array("\u{1b}[D".utf8)    // Left
-            case 115: bytes = Array("\u{1b}[H".utf8)    // Home
-            case 119: bytes = Array("\u{1b}[F".utf8)    // End
-            case 116: bytes = Array("\u{1b}[5~".utf8)   // PageUp
-            case 121: bytes = Array("\u{1b}[6~".utf8)   // PageDown
-            case 117: bytes = Array("\u{1b}[3~".utf8)   // Delete
+            case 36:  bytes = [0x0d]
+            case 51:  bytes = [0x7f]
+            case 48:  bytes = [0x09]
+            case 53:  bytes = [0x1b]
+            case 126: bytes = Array((appMode ? "\u{1b}OA" : "\u{1b}[A").utf8)
+            case 125: bytes = Array((appMode ? "\u{1b}OB" : "\u{1b}[B").utf8)
+            case 124: bytes = Array((appMode ? "\u{1b}OC" : "\u{1b}[C").utf8)
+            case 123: bytes = Array((appMode ? "\u{1b}OD" : "\u{1b}[D").utf8)
+            case 115: bytes = Array((appMode ? "\u{1b}OH" : "\u{1b}[H").utf8)
+            case 119: bytes = Array((appMode ? "\u{1b}OF" : "\u{1b}[F").utf8)
+            case 116: bytes = Array("\u{1b}[5~".utf8)
+            case 121: bytes = Array("\u{1b}[6~".utf8)
+            case 117: bytes = Array("\u{1b}[3~".utf8)
             default:
                 if let chars = event.characters {
                     bytes = Array(chars.utf8)
@@ -116,14 +117,16 @@ class TerminalMetalView: NSView {
         }
 
         // Cursor
-        var cursorRow: UInt32 = 0
-        var cursorCol: UInt32 = 0
-        term_session_cursor_pos(session, &cursorRow, &cursorCol)
+        if term_session_cursor_visible(session) != 0 {
+            var cursorRow: UInt32 = 0
+            var cursorCol: UInt32 = 0
+            term_session_cursor_pos(session, &cursorRow, &cursorCol)
 
-        let cursorX = CGFloat(cursorCol) * cellWidth
-        let cursorY = CGFloat(cursorRow) * cellHeight
-        ctx.setFillColor(CGColor(red: 0.8, green: 0.8, blue: 0.8, alpha: 0.7))
-        ctx.fill(CGRect(x: cursorX, y: cursorY, width: cellWidth, height: cellHeight))
+            let cursorX = CGFloat(cursorCol) * cellWidth
+            let cursorY = CGFloat(cursorRow) * cellHeight
+            ctx.setFillColor(CGColor(red: 0.8, green: 0.8, blue: 0.8, alpha: 0.7))
+            ctx.fill(CGRect(x: cursorX, y: cursorY, width: cellWidth, height: cellHeight))
+        }
     }
 
     private func colorFromRGB(_ rgb: UInt32) -> CGColor {

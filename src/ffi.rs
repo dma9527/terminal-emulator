@@ -75,6 +75,13 @@ pub extern "C" fn term_session_read_pty(session: *mut TermSession) -> c_int {
             Err(_) => return -1,
         }
     }
+    // Flush write-back (DSR responses) to PTY
+    if !session.terminal.write_back.is_empty() {
+        let wb: Vec<u8> = session.terminal.write_back.drain(..).collect();
+        if let Some(pty) = &session.pty {
+            let _ = pty.write(&wb);
+        }
+    }
     total
 }
 
@@ -210,4 +217,25 @@ pub extern "C" fn term_string_free(s: *mut c_char) {
     if !s.is_null() {
         unsafe { drop(std::ffi::CString::from_raw(s)); }
     }
+}
+
+/// Returns 1 if cursor keys are in application mode.
+#[no_mangle]
+pub extern "C" fn term_session_cursor_keys_app(session: *const TermSession) -> c_int {
+    let session = unsafe { &*session };
+    session.terminal.cursor_keys_app as c_int
+}
+
+/// Returns 1 if cursor is visible.
+#[no_mangle]
+pub extern "C" fn term_session_cursor_visible(session: *const TermSession) -> c_int {
+    let session = unsafe { &*session };
+    session.terminal.cursor_visible as c_int
+}
+
+/// Returns 1 if bracketed paste mode is on.
+#[no_mangle]
+pub extern "C" fn term_session_bracketed_paste(session: *const TermSession) -> c_int {
+    let session = unsafe { &*session };
+    session.terminal.bracketed_paste as c_int
 }

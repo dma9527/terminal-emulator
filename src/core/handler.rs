@@ -1,7 +1,7 @@
 /// Terminal handler: translates VT parser Actions into Grid operations.
 /// This is the brain that interprets CSI/ESC/OSC sequences.
 
-use crate::core::grid::{Grid, CellAttr, Color};
+use crate::core::grid::{Grid, Cell, CellAttr, Color};
 use crate::core::parser::Action;
 use crate::core::utf8::{Utf8Decoder, char_width};
 
@@ -32,6 +32,9 @@ pub struct Terminal {
     fg: Color,
     bg: Color,
     saved_cursor: (usize, usize),
+    saved_attr: CellAttr,
+    saved_fg: Color,
+    saved_bg: Color,
     /// Alternate screen buffer
     alt_grid: Option<Grid>,
     /// Tab stops (column indices)
@@ -45,6 +48,35 @@ pub struct Terminal {
     scroll_bottom: usize,
     /// Title set via OSC
     pub title: String,
+    /// Write-back buffer for DSR responses
+    pub write_back: Vec<u8>,
+    /// Cursor key mode: true = application, false = normal
+    pub cursor_keys_app: bool,
+    /// Cursor visible
+    pub cursor_visible: bool,
+    /// Bracketed paste mode
+    pub bracketed_paste: bool,
+    /// Mouse reporting mode
+    pub mouse_mode: MouseMode,
+    /// Mouse encoding
+    pub mouse_encoding: MouseEncoding,
+    /// Keypad application mode
+    pub keypad_app: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MouseMode {
+    Off,
+    X10,       // 9 — press only
+    Normal,    // 1000 — press + release
+    Button,    // 1002 — press + release + drag
+    Any,       // 1003 — all motion
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MouseEncoding {
+    X10,   // default
+    Sgr,   // 1006
 }
 
 impl Terminal {
@@ -60,6 +92,9 @@ impl Terminal {
             fg: Color::DEFAULT_FG,
             bg: Color::DEFAULT_BG,
             saved_cursor: (0, 0),
+            saved_attr: CellAttr::empty(),
+            saved_fg: Color::DEFAULT_FG,
+            saved_bg: Color::DEFAULT_BG,
             alt_grid: None,
             tab_stops,
             origin_mode: false,
@@ -67,6 +102,13 @@ impl Terminal {
             scroll_top: 0,
             scroll_bottom: rows - 1,
             title: String::new(),
+            write_back: Vec::new(),
+            cursor_keys_app: false,
+            cursor_visible: true,
+            bracketed_paste: false,
+            mouse_mode: MouseMode::Off,
+            mouse_encoding: MouseEncoding::X10,
+            keypad_app: false,
         }
     }
 
@@ -196,55 +238,79 @@ impl Terminal {
 
     fn csi_dispatch(&mut self, final_byte: u8, params: &[u16], intermediates: &[u8]) {
         let is_private = intermediates.first() == Some(&b'?');
+        let is_space = intermediates.first() == Some(&b' ');
 
         match final_byte {
             // Cursor movement
-            b'A' => { // CUU — Cursor Up
+            b'A' => { // CUU
                 let n = param(params, 0, 1) as usize;
-                self.grid.cursor_row = self.grid.cursor_row.saturating_sub(n);
+                let top = if self.origin_mode { self.scroll_top } else { 0 };
+                self.grid.cursor_row = self.grid.cursor_row.saturating_sub(n).max(top);
             }
-            b'B' => { // CUD — Cursor Down
+            b'B' => { // CUD
                 let n = param(params, 0, 1) as usize;
-                let max = self.grid.rows() - 1;
-                self.grid.cursor_row = (self.grid.cursor_row + n).min(max);
+                let bottom = if self.origin_mode { self.scroll_bottom } else { self.grid.rows() - 1 };
+                self.grid.cursor_row = (self.grid.cursor_row + n).min(bottom);
             }
-            b'C' => { // CUF — Cursor Forward
+            b'C' => { // CUF
                 let n = param(params, 0, 1) as usize;
-                let max = self.grid.cols() - 1;
-                self.grid.cursor_col = (self.grid.cursor_col + n).min(max);
+                self.grid.cursor_col = (self.grid.cursor_col + n).min(self.grid.cols() - 1);
             }
-            b'D' => { // CUB — Cursor Back
+            b'D' => { // CUB
                 let n = param(params, 0, 1) as usize;
                 self.grid.cursor_col = self.grid.cursor_col.saturating_sub(n);
             }
-            b'E' => { // CNL — Cursor Next Line
+            b'E' => { // CNL
                 let n = param(params, 0, 1) as usize;
                 let max = self.grid.rows() - 1;
                 self.grid.cursor_row = (self.grid.cursor_row + n).min(max);
                 self.grid.cursor_col = 0;
             }
-            b'F' => { // CPL — Cursor Previous Line
+            b'F' => { // CPL
                 let n = param(params, 0, 1) as usize;
                 self.grid.cursor_row = self.grid.cursor_row.saturating_sub(n);
                 self.grid.cursor_col = 0;
             }
-            b'G' => { // CHA — Cursor Horizontal Absolute
+            b'G' | b'`' => { // CHA / HPA
                 let col = param(params, 0, 1) as usize;
                 self.grid.cursor_col = (col - 1).min(self.grid.cols() - 1);
             }
-            b'H' | b'f' => { // CUP / HVP — Cursor Position
+            b'H' | b'f' => { // CUP / HVP
                 let row = param(params, 0, 1) as usize;
                 let col = param(params, 1, 1) as usize;
-                self.grid.cursor_row = (row - 1).min(self.grid.rows() - 1);
+                let offset = if self.origin_mode { self.scroll_top } else { 0 };
+                self.grid.cursor_row = (offset + row - 1).min(self.grid.rows() - 1);
                 self.grid.cursor_col = (col - 1).min(self.grid.cols() - 1);
             }
-            b'd' => { // VPA — Vertical Position Absolute
+            b'd' => { // VPA
                 let row = param(params, 0, 1) as usize;
                 self.grid.cursor_row = (row - 1).min(self.grid.rows() - 1);
+            }
+            b'I' => { // CHT — Cursor Forward Tabulation
+                let n = param(params, 0, 1) as usize;
+                for _ in 0..n {
+                    let col = self.grid.cursor_col;
+                    let next = self.tab_stops.iter()
+                        .enumerate().skip(col + 1)
+                        .find(|(_, &s)| s).map(|(i, _)| i)
+                        .unwrap_or(self.grid.cols() - 1);
+                    self.grid.cursor_col = next;
+                }
+            }
+            b'Z' => { // CBT — Cursor Backward Tabulation
+                let n = param(params, 0, 1) as usize;
+                for _ in 0..n {
+                    let col = self.grid.cursor_col;
+                    let prev = self.tab_stops.iter()
+                        .enumerate().rev().skip(self.tab_stops.len() - col)
+                        .find(|(_, &s)| s).map(|(i, _)| i)
+                        .unwrap_or(0);
+                    self.grid.cursor_col = prev;
+                }
             }
 
             // Erase
-            b'J' => { // ED — Erase in Display
+            b'J' => {
                 let mode = param(params, 0, 0);
                 match mode {
                     0 => self.grid.erase_below(),
@@ -253,7 +319,7 @@ impl Terminal {
                     _ => {}
                 }
             }
-            b'K' => { // EL — Erase in Line
+            b'K' => {
                 let mode = param(params, 0, 0);
                 match mode {
                     0 => self.grid.erase_line_right(),
@@ -262,49 +328,67 @@ impl Terminal {
                     _ => {}
                 }
             }
+            b'X' => { // ECH — Erase Characters
+                let n = param(params, 0, 1) as usize;
+                let row = self.grid.cursor_row;
+                let col = self.grid.cursor_col;
+                for c in col..(col + n).min(self.grid.cols()) {
+                    *self.grid.cell_mut(row, c) = Cell::default();
+                }
+            }
 
             // Insert/Delete
-            b'L' => { // IL — Insert Lines
+            b'L' => {
                 let n = param(params, 0, 1) as usize;
                 self.grid.insert_lines(self.grid.cursor_row, n, self.scroll_bottom);
             }
-            b'M' => { // DL — Delete Lines
+            b'M' => {
                 let n = param(params, 0, 1) as usize;
                 self.grid.delete_lines(self.grid.cursor_row, n, self.scroll_bottom);
             }
-            b'P' => { // DCH — Delete Characters
+            b'P' => {
                 let n = param(params, 0, 1) as usize;
                 self.grid.delete_chars(n);
             }
-            b'@' => { // ICH — Insert Characters
+            b'@' => {
                 let n = param(params, 0, 1) as usize;
                 self.grid.insert_chars(n);
             }
 
             // Scroll
-            b'S' => { // SU — Scroll Up
+            b'S' if !is_private => {
                 let n = param(params, 0, 1) as usize;
                 for _ in 0..n {
                     self.grid.scroll_region_up(self.scroll_top, self.scroll_bottom);
                 }
             }
-            b'T' => { // SD — Scroll Down
+            b'T' => {
                 let n = param(params, 0, 1) as usize;
                 for _ in 0..n {
                     self.grid.scroll_region_down(self.scroll_top, self.scroll_bottom);
                 }
             }
 
-            // SGR — Select Graphic Rendition
+            // REP — Repeat preceding character
+            b'b' => {
+                let n = param(params, 0, 1) as usize;
+                if self.grid.cursor_col > 0 {
+                    let ch = self.grid.cell(self.grid.cursor_row, self.grid.cursor_col - 1).ch;
+                    for _ in 0..n {
+                        self.print(ch);
+                    }
+                }
+            }
+
+            // SGR
             b'm' => self.handle_sgr(params),
 
             // Scroll region
-            b'r' => { // DECSTBM — Set Top and Bottom Margins
+            b'r' if !is_private => {
                 let top = param(params, 0, 1) as usize;
                 let bottom = param(params, 1, self.grid.rows() as u16) as usize;
                 self.scroll_top = (top - 1).min(self.grid.rows() - 1);
                 self.scroll_bottom = (bottom - 1).min(self.grid.rows() - 1);
-                // Move cursor to home
                 self.grid.cursor_row = if self.origin_mode { self.scroll_top } else { 0 };
                 self.grid.cursor_col = 0;
             }
@@ -312,19 +396,83 @@ impl Terminal {
             // DEC Private modes
             b'h' if is_private => self.set_dec_mode(params, true),
             b'l' if is_private => self.set_dec_mode(params, false),
+            // SM — Set Mode (ANSI)
+            b'h' if !is_private => self.set_ansi_mode(params, true),
+            b'l' if !is_private => self.set_ansi_mode(params, false),
 
-            // Save/restore cursor
-            b's' => {
+            // Save/restore cursor (ANSI)
+            b's' if !is_private => {
                 self.saved_cursor = (self.grid.cursor_row, self.grid.cursor_col);
+                self.saved_attr = self.attr;
+                self.saved_fg = self.fg;
+                self.saved_bg = self.bg;
             }
             b'u' => {
                 let (r, c) = self.saved_cursor;
                 self.grid.cursor_row = r.min(self.grid.rows() - 1);
                 self.grid.cursor_col = c.min(self.grid.cols() - 1);
+                self.attr = self.saved_attr;
+                self.fg = self.saved_fg;
+                self.bg = self.saved_bg;
             }
 
-            // Device status report
-            b'n' => {} // TODO: respond to DSR queries
+            // DSR — Device Status Report
+            b'n' if !is_private => {
+                match param(params, 0, 0) {
+                    5 => { // Status report — "OK"
+                        self.write_back.extend_from_slice(b"\x1b[0n");
+                    }
+                    6 => { // CPR — Cursor Position Report
+                        let r = self.grid.cursor_row + 1;
+                        let c = self.grid.cursor_col + 1;
+                        let resp = format!("\x1b[{};{}R", r, c);
+                        self.write_back.extend_from_slice(resp.as_bytes());
+                    }
+                    _ => {}
+                }
+            }
+            b'n' if is_private => {
+                match param(params, 0, 0) {
+                    6 => { // DECXCPR
+                        let r = self.grid.cursor_row + 1;
+                        let c = self.grid.cursor_col + 1;
+                        let resp = format!("\x1b[?{};{}R", r, c);
+                        self.write_back.extend_from_slice(resp.as_bytes());
+                    }
+                    _ => {}
+                }
+            }
+
+            // DA — Device Attributes
+            b'c' if !is_private => {
+                if param(params, 0, 0) == 0 {
+                    // Report as VT220
+                    self.write_back.extend_from_slice(b"\x1b[?62;22c");
+                }
+            }
+
+            // Tab clear
+            b'g' => {
+                match param(params, 0, 0) {
+                    0 => { // Clear tab at cursor
+                        let col = self.grid.cursor_col;
+                        if col < self.tab_stops.len() {
+                            self.tab_stops[col] = false;
+                        }
+                    }
+                    3 => { // Clear all tabs
+                        self.tab_stops.fill(false);
+                    }
+                    _ => {}
+                }
+            }
+
+            // DECSCUSR — Set Cursor Style (CSI Ps SP q)
+            b'q' if is_space => {
+                // 0,1 = block blink, 2 = block steady, 3 = underline blink,
+                // 4 = underline steady, 5 = bar blink, 6 = bar steady
+                // TODO: pass to renderer
+            }
 
             _ => {} // Unhandled CSI
         }
@@ -341,14 +489,17 @@ impl Terminal {
             match params[i] {
                 0 => self.sgr_reset(),
                 1 => self.attr.insert(CellAttr::BOLD),
+                2 => self.attr.insert(CellAttr::DIM),
                 3 => self.attr.insert(CellAttr::ITALIC),
                 4 => self.attr.insert(CellAttr::UNDERLINE),
                 7 => self.attr.insert(CellAttr::INVERSE),
+                8 => self.attr.insert(CellAttr::HIDDEN),
                 9 => self.attr.insert(CellAttr::STRIKETHROUGH),
-                22 => self.attr.remove(CellAttr::BOLD),
+                22 => { self.attr.remove(CellAttr::BOLD); self.attr.remove(CellAttr::DIM); }
                 23 => self.attr.remove(CellAttr::ITALIC),
                 24 => self.attr.remove(CellAttr::UNDERLINE),
                 27 => self.attr.remove(CellAttr::INVERSE),
+                28 => self.attr.remove(CellAttr::HIDDEN),
                 29 => self.attr.remove(CellAttr::STRIKETHROUGH),
                 // Foreground colors
                 30..=37 => self.fg = ANSI_COLORS[(params[i] - 30) as usize],
@@ -385,15 +536,56 @@ impl Terminal {
     fn set_dec_mode(&mut self, params: &[u16], enable: bool) {
         for &p in params {
             match p {
-                1 => {}    // DECCKM — cursor keys mode (TODO: input handler)
-                6 => self.origin_mode = enable,
-                7 => self.auto_wrap = enable,
-                25 => {}   // DECTCEM — cursor visible (TODO: renderer)
-                1049 => {  // Alternate screen buffer
+                1 => self.cursor_keys_app = enable,  // DECCKM
+                6 => self.origin_mode = enable,       // DECOM
+                7 => self.auto_wrap = enable,         // DECAWM
+                12 => {}                              // Cursor blink (renderer)
+                25 => self.cursor_visible = enable,   // DECTCEM
+                9 => self.mouse_mode = if enable { MouseMode::X10 } else { MouseMode::Off },
+                1000 => self.mouse_mode = if enable { MouseMode::Normal } else { MouseMode::Off },
+                1002 => self.mouse_mode = if enable { MouseMode::Button } else { MouseMode::Off },
+                1003 => self.mouse_mode = if enable { MouseMode::Any } else { MouseMode::Off },
+                1006 => self.mouse_encoding = if enable { MouseEncoding::Sgr } else { MouseEncoding::X10 },
+                47 => { // Alt screen (no save/restore cursor)
                     if enable {
-                        let cols = self.grid.cols();
-                        let rows = self.grid.rows();
+                        let (cols, rows) = (self.grid.cols(), self.grid.rows());
+                        let old = std::mem::replace(&mut self.grid, Grid::new(cols, rows));
+                        self.alt_grid = Some(old);
+                    } else if let Some(main) = self.alt_grid.take() {
+                        self.grid = main;
+                    }
+                }
+                1047 => { // Alt screen (clear on enter)
+                    if enable {
+                        let (cols, rows) = (self.grid.cols(), self.grid.rows());
+                        let old = std::mem::replace(&mut self.grid, Grid::new(cols, rows));
+                        self.alt_grid = Some(old);
+                    } else if let Some(main) = self.alt_grid.take() {
+                        self.grid = main;
+                    }
+                }
+                1048 => { // Save/restore cursor
+                    if enable {
                         self.saved_cursor = (self.grid.cursor_row, self.grid.cursor_col);
+                        self.saved_attr = self.attr;
+                        self.saved_fg = self.fg;
+                        self.saved_bg = self.bg;
+                    } else {
+                        let (r, c) = self.saved_cursor;
+                        self.grid.cursor_row = r.min(self.grid.rows() - 1);
+                        self.grid.cursor_col = c.min(self.grid.cols() - 1);
+                        self.attr = self.saved_attr;
+                        self.fg = self.saved_fg;
+                        self.bg = self.saved_bg;
+                    }
+                }
+                1049 => { // Alt screen + save/restore cursor
+                    if enable {
+                        let (cols, rows) = (self.grid.cols(), self.grid.rows());
+                        self.saved_cursor = (self.grid.cursor_row, self.grid.cursor_col);
+                        self.saved_attr = self.attr;
+                        self.saved_fg = self.fg;
+                        self.saved_bg = self.bg;
                         let old = std::mem::replace(&mut self.grid, Grid::new(cols, rows));
                         self.alt_grid = Some(old);
                     } else if let Some(main) = self.alt_grid.take() {
@@ -401,30 +593,76 @@ impl Terminal {
                         let (r, c) = self.saved_cursor;
                         self.grid.cursor_row = r.min(self.grid.rows() - 1);
                         self.grid.cursor_col = c.min(self.grid.cols() - 1);
+                        self.attr = self.saved_attr;
+                        self.fg = self.saved_fg;
+                        self.bg = self.saved_bg;
                     }
                 }
-                2004 => {} // Bracketed paste (TODO: input handler)
+                2004 => self.bracketed_paste = enable,
                 _ => {}
             }
         }
     }
 
-    fn esc_dispatch(&mut self, final_byte: u8, _intermediates: &[u8]) {
-        match final_byte {
-            b'7' => { // DECSC — Save Cursor
-                self.saved_cursor = (self.grid.cursor_row, self.grid.cursor_col);
+    fn set_ansi_mode(&mut self, params: &[u16], _enable: bool) {
+        for &p in params {
+            match p {
+                4 => {} // IRM — Insert/Replace mode (TODO)
+                20 => {} // LNM — Line feed/new line mode
+                _ => {}
             }
-            b'8' => { // DECRC — Restore Cursor
+        }
+    }
+
+    fn esc_dispatch(&mut self, final_byte: u8, intermediates: &[u8]) {
+        // Check for ESC # sequences
+        if intermediates.first() == Some(&b'#') {
+            match final_byte {
+                b'8' => { // DECALN — fill screen with 'E'
+                    for r in 0..self.grid.rows() {
+                        for c in 0..self.grid.cols() {
+                            let cell = self.grid.cell_mut(r, c);
+                            cell.ch = 'E';
+                            cell.attr = CellAttr::empty();
+                            cell.fg = Color::DEFAULT_FG;
+                            cell.bg = Color::DEFAULT_BG;
+                        }
+                    }
+                }
+                _ => {}
+            }
+            return;
+        }
+
+        match final_byte {
+            b'7' => { // DECSC — Save Cursor + attrs
+                self.saved_cursor = (self.grid.cursor_row, self.grid.cursor_col);
+                self.saved_attr = self.attr;
+                self.saved_fg = self.fg;
+                self.saved_bg = self.bg;
+            }
+            b'8' => { // DECRC — Restore Cursor + attrs
                 let (r, c) = self.saved_cursor;
                 self.grid.cursor_row = r.min(self.grid.rows() - 1);
                 self.grid.cursor_col = c.min(self.grid.cols() - 1);
+                self.attr = self.saved_attr;
+                self.fg = self.saved_fg;
+                self.bg = self.saved_bg;
             }
-            b'M' => self.reverse_index(), // RI — Reverse Index
-            b'D' => self.index(),          // IND — Index
-            b'E' => {                      // NEL — Next Line
+            b'M' => self.reverse_index(),
+            b'D' => self.index(),
+            b'E' => {
                 self.grid.cursor_col = 0;
                 self.index();
             }
+            b'H' => { // HTS — Horizontal Tab Set
+                let col = self.grid.cursor_col;
+                if col < self.tab_stops.len() {
+                    self.tab_stops[col] = true;
+                }
+            }
+            b'=' => self.keypad_app = true,   // DECKPAM
+            b'>' => self.keypad_app = false,  // DECKPNM
             b'c' => { // RIS — Full Reset
                 let cols = self.grid.cols();
                 let rows = self.grid.rows();
@@ -975,5 +1213,200 @@ mod tests {
     fn test_color_from_256_grayscale() {
         assert_eq!(color_from_256(232), Color { r: 8, g: 8, b: 8 });
         assert_eq!(color_from_256(255), Color { r: 238, g: 238, b: 238 });
+    }
+
+    // ---- Phase 3 tests ----
+
+    #[test]
+    fn test_dsr_status() {
+        let mut t = Terminal::new(10, 5);
+        let mut p = VtParser::new();
+        t.feed_bytes(&mut p, b"\x1b[5n");
+        assert_eq!(t.write_back, b"\x1b[0n");
+    }
+
+    #[test]
+    fn test_dsr_cursor_position() {
+        let mut t = Terminal::new(10, 5);
+        let mut p = VtParser::new();
+        t.feed_bytes(&mut p, b"\x1b[3;5H");
+        t.write_back.clear();
+        t.feed_bytes(&mut p, b"\x1b[6n");
+        assert_eq!(t.write_back, b"\x1b[3;5R");
+    }
+
+    #[test]
+    fn test_device_attributes() {
+        let mut t = Terminal::new(10, 5);
+        let mut p = VtParser::new();
+        t.feed_bytes(&mut p, b"\x1b[c");
+        assert_eq!(t.write_back, b"\x1b[?62;22c");
+    }
+
+    #[test]
+    fn test_cursor_keys_app_mode() {
+        let mut t = Terminal::new(10, 5);
+        let mut p = VtParser::new();
+        assert!(!t.cursor_keys_app);
+        t.feed_bytes(&mut p, b"\x1b[?1h");
+        assert!(t.cursor_keys_app);
+        t.feed_bytes(&mut p, b"\x1b[?1l");
+        assert!(!t.cursor_keys_app);
+    }
+
+    #[test]
+    fn test_cursor_visible() {
+        let mut t = Terminal::new(10, 5);
+        let mut p = VtParser::new();
+        assert!(t.cursor_visible);
+        t.feed_bytes(&mut p, b"\x1b[?25l");
+        assert!(!t.cursor_visible);
+        t.feed_bytes(&mut p, b"\x1b[?25h");
+        assert!(t.cursor_visible);
+    }
+
+    #[test]
+    fn test_bracketed_paste() {
+        let mut t = Terminal::new(10, 5);
+        let mut p = VtParser::new();
+        assert!(!t.bracketed_paste);
+        t.feed_bytes(&mut p, b"\x1b[?2004h");
+        assert!(t.bracketed_paste);
+        t.feed_bytes(&mut p, b"\x1b[?2004l");
+        assert!(!t.bracketed_paste);
+    }
+
+    #[test]
+    fn test_mouse_mode() {
+        let mut t = Terminal::new(10, 5);
+        let mut p = VtParser::new();
+        assert_eq!(t.mouse_mode, MouseMode::Off);
+        t.feed_bytes(&mut p, b"\x1b[?1000h");
+        assert_eq!(t.mouse_mode, MouseMode::Normal);
+        t.feed_bytes(&mut p, b"\x1b[?1003h");
+        assert_eq!(t.mouse_mode, MouseMode::Any);
+        t.feed_bytes(&mut p, b"\x1b[?1003l");
+        assert_eq!(t.mouse_mode, MouseMode::Off);
+    }
+
+    #[test]
+    fn test_sgr_mouse_encoding() {
+        let mut t = Terminal::new(10, 5);
+        let mut p = VtParser::new();
+        assert_eq!(t.mouse_encoding, MouseEncoding::X10);
+        t.feed_bytes(&mut p, b"\x1b[?1006h");
+        assert_eq!(t.mouse_encoding, MouseEncoding::Sgr);
+    }
+
+    #[test]
+    fn test_ech_erase_characters() {
+        let mut t = Terminal::new(10, 5);
+        let mut p = VtParser::new();
+        t.feed_bytes(&mut p, b"ABCDEFGHIJ");
+        t.feed_bytes(&mut p, b"\x1b[1;4H");
+        t.feed_bytes(&mut p, b"\x1b[3X");
+        assert_eq!(t.grid.cell(0, 3).ch, ' ');
+        assert_eq!(t.grid.cell(0, 4).ch, ' ');
+        assert_eq!(t.grid.cell(0, 5).ch, ' ');
+        assert_eq!(t.grid.cell(0, 6).ch, 'G');
+    }
+
+    #[test]
+    fn test_tab_set_and_clear() {
+        let mut t = Terminal::new(20, 5);
+        let mut p = VtParser::new();
+        t.feed_bytes(&mut p, b"\x1b[1;6H");
+        t.feed_bytes(&mut p, b"\x1bH");
+        t.feed_bytes(&mut p, b"\x1b[1;1H");
+        t.feed_bytes(&mut p, b"\t");
+        assert_eq!(t.grid.cursor_col, 5);
+        t.feed_bytes(&mut p, b"\x1b[0g");
+        t.feed_bytes(&mut p, b"\x1b[1;1H");
+        t.feed_bytes(&mut p, b"\t");
+        assert_eq!(t.grid.cursor_col, 8);
+    }
+
+    #[test]
+    fn test_keypad_mode() {
+        let mut t = Terminal::new(10, 5);
+        let mut p = VtParser::new();
+        assert!(!t.keypad_app);
+        t.feed_bytes(&mut p, b"\x1b=");
+        assert!(t.keypad_app);
+        t.feed_bytes(&mut p, b"\x1b>");
+        assert!(!t.keypad_app);
+    }
+
+    #[test]
+    fn test_decaln() {
+        let mut t = Terminal::new(5, 3);
+        let mut p = VtParser::new();
+        t.feed_bytes(&mut p, b"\x1b#8");
+        for r in 0..3 {
+            for c in 0..5 {
+                assert_eq!(t.grid.cell(r, c).ch, 'E');
+            }
+        }
+    }
+
+    #[test]
+    fn test_dim_hidden_attr() {
+        let mut t = Terminal::new(10, 5);
+        let mut p = VtParser::new();
+        t.feed_bytes(&mut p, b"\x1b[2m");
+        t.feed_bytes(&mut p, b"A");
+        assert!(t.grid.cell(0, 0).attr.contains(CellAttr::DIM));
+        t.feed_bytes(&mut p, b"\x1b[8m");
+        t.feed_bytes(&mut p, b"B");
+        assert!(t.grid.cell(0, 1).attr.contains(CellAttr::HIDDEN));
+        t.feed_bytes(&mut p, b"\x1b[22m");
+        t.feed_bytes(&mut p, b"C");
+        assert!(!t.grid.cell(0, 2).attr.contains(CellAttr::DIM));
+    }
+
+    #[test]
+    fn test_alt_screen_1047() {
+        let mut t = Terminal::new(10, 5);
+        let mut p = VtParser::new();
+        t.feed_bytes(&mut p, b"Hello");
+        t.feed_bytes(&mut p, b"\x1b[?1047h");
+        assert_eq!(t.grid.cell(0, 0).ch, ' ');
+        t.feed_bytes(&mut p, b"\x1b[?1047l");
+        assert_eq!(t.grid.cell(0, 0).ch, 'H');
+    }
+
+    #[test]
+    fn test_save_restore_cursor_with_attrs() {
+        let mut t = Terminal::new(10, 5);
+        let mut p = VtParser::new();
+        t.feed_bytes(&mut p, b"\x1b[1;31m");
+        t.feed_bytes(&mut p, b"\x1b[s");
+        t.feed_bytes(&mut p, b"\x1b[0m");
+        t.feed_bytes(&mut p, b"\x1b[u");
+        t.feed_bytes(&mut p, b"X");
+        assert!(t.grid.cell(0, 0).attr.contains(CellAttr::BOLD));
+        assert_eq!(t.grid.cell(0, 0).fg, ANSI_COLORS[1]);
+    }
+
+    #[test]
+    fn test_rep_repeat_char() {
+        let mut t = Terminal::new(10, 5);
+        let mut p = VtParser::new();
+        t.feed_bytes(&mut p, b"A");
+        t.feed_bytes(&mut p, b"\x1b[3b");
+        assert_eq!(t.grid.cell(0, 0).ch, 'A');
+        assert_eq!(t.grid.cell(0, 1).ch, 'A');
+        assert_eq!(t.grid.cell(0, 2).ch, 'A');
+        assert_eq!(t.grid.cell(0, 3).ch, 'A');
+    }
+
+    #[test]
+    fn test_origin_mode_cup() {
+        let mut t = Terminal::new(10, 10);
+        let mut p = VtParser::new();
+        t.feed_bytes(&mut p, b"\x1b[3;7r");
+        t.feed_bytes(&mut p, b"\x1b[?6h");
+        t.feed_bytes(&mut p, b"\x1b[1;1H");
+        assert_eq!(t.grid.cursor_row, 2);
     }
 }

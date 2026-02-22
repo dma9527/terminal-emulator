@@ -40,8 +40,10 @@ void term_session_grid_size(const TermSession* session, uint32_t* out_cols, uint
 char* term_session_title(const TermSession* session);
 void term_string_free(char* s);
 
-// Version
-const char* libterm_version(void);
+// Terminal state queries
+int term_session_cursor_keys_app(const TermSession* session);
+int term_session_cursor_visible(const TermSession* session);
+int term_session_bracketed_paste(const TermSession* session);
 
 #ifdef __cplusplus
 }
