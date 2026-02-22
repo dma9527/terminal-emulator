@@ -71,11 +71,13 @@ class TerminalViewController: NSViewController {
     private func updateTerminalSize() {
         guard let session = session else { return }
         let bounds = view.bounds
-        let cellWidth: CGFloat = 8.4
-        let cellHeight: CGFloat = 16.0
+        let cw = terminalView.cellWidth
+        let ch = terminalView.cellHeight
 
-        let cols = UInt32(bounds.width / cellWidth)
-        let rows = UInt32(bounds.height / cellHeight)
+        guard cw > 0 && ch > 0 else { return }
+
+        let cols = UInt32(bounds.width / cw)
+        let rows = UInt32(bounds.height / ch)
 
         if cols > 0 && rows > 0 {
             term_session_resize(session, cols, rows,

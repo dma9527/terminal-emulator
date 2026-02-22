@@ -12,51 +12,66 @@ class TerminalMetalView: NSView, CALayerDelegate {
     private var gpuReady = false
     private var displayLink: CVDisplayLink?
 
-    // CG fallback
-    private let cellWidth: CGFloat = 8.4
-    private let cellHeight: CGFloat = 16.0
-    private let fontSize: CGFloat = 14.0
-    private lazy var font: CTFont = CTFontCreateWithName("Menlo" as CFString, fontSize, nil)
+    // Font metrics — computed from actual font
+    private(set) var cellWidth: CGFloat = 1
+    private(set) var cellHeight: CGFloat = 1
+    private var fontAscent: CGFloat = 0
+    private var ctFont: CTFont!
+    private var fontSize: CGFloat = 15.0
+    private var fontFamily: String = "Menlo"
 
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
 
     override init(frame: NSRect) {
         super.init(frame: frame)
-        wantsLayer = true
+        setupFont(family: fontFamily, size: fontSize)
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
-    override func makeBackingLayer() -> CALayer {
-        let layer = CAMetalLayer()
-        layer.device = MTLCreateSystemDefaultDevice()
-        layer.pixelFormat = .bgra8Unorm_srgb
-        layer.framebufferOnly = true
-        layer.contentsScale = NSScreen.main?.backingScaleFactor ?? 2.0
-        metalLayer = layer
-        return layer
+    /// Compute cell dimensions from real font metrics.
+    func setupFont(family: String, size: CGFloat) {
+        fontFamily = family
+        fontSize = size
+        ctFont = CTFontCreateWithName(family as CFString, size, nil)
+
+        // Cell width = advance width of 'M' (em-width for monospace)
+        let chars: [UniChar] = [0x4D] // 'M'
+        var glyphBuf: CGGlyph = 0
+        CTFontGetGlyphsForCharacters(ctFont, chars, &glyphBuf, 1)
+        var advances = CGSize.zero
+        CTFontGetAdvancesForGlyphs(ctFont, .horizontal, &glyphBuf, &advances, 1)
+        cellWidth = ceil(advances.width)
+
+        // Cell height = ascent + descent + leading
+        let ascent = CTFontGetAscent(ctFont)
+        let descent = CTFontGetDescent(ctFont)
+        let leading = CTFontGetLeading(ctFont)
+        fontAscent = ceil(ascent)
+        cellHeight = ceil(ascent + descent + leading)
+
+        // Ensure minimum sizes
+        if cellWidth < 1 { cellWidth = ceil(size * 0.6) }
+        if cellHeight < 1 { cellHeight = ceil(size * 1.2) }
     }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         window?.makeFirstResponder(self)
+        if let scale = window?.backingScaleFactor {
+            metalLayer?.contentsScale = scale
+        }
         initGPU()
         startDisplayLink()
     }
 
     private func initGPU() {
-        guard let session = session, let layer = metalLayer else { return }
-        let bounds = self.bounds
-        let scale = window?.backingScaleFactor ?? 2.0
-        let w = UInt32(bounds.width * scale)
-        let h = UInt32(bounds.height * scale)
-        let ptr = Unmanaged.passUnretained(layer).toOpaque()
-        let result = term_session_init_gpu(session, ptr, w, h)
-        gpuReady = (result == 0)
-        if !gpuReady {
-            NSLog("GPU init failed, falling back to CoreGraphics")
-        }
+        guard let session = session else { return }
+        // GPU rendering disabled until Rust atlas font size matches Swift metrics.
+        // CG fallback provides correct font rendering for now.
+        // TODO: pass font size to Rust via FFI, rebuild atlas at correct size
+        gpuReady = false
     }
 
     private func startDisplayLink() {
@@ -152,7 +167,7 @@ class TerminalMetalView: NSView, CALayerDelegate {
     // MARK: - CoreGraphics Fallback
 
     override func draw(_ dirtyRect: NSRect) {
-        guard !gpuReady else { return } // GPU handles rendering
+        guard !gpuReady else { return }
         guard let ctx = NSGraphicsContext.current?.cgContext,
               let session = session else { return }
 
@@ -183,14 +198,15 @@ class TerminalMetalView: NSView, CALayerDelegate {
                 let fgColor = colorFromRGB(fgRGB)
 
                 let attrs: [NSAttributedString.Key: Any] = [
-                    .font: font as Any,
+                    .font: ctFont as Any,
                     .foregroundColor: NSColor(cgColor: fgColor) ?? NSColor.white,
                 ]
                 let attrStr = NSAttributedString(string: String(Character(scalar)), attributes: attrs)
                 let line = CTLineCreateWithAttributedString(attrStr)
 
                 ctx.saveGState()
-                let baselineY = y + cellHeight - 3.0
+                // Baseline = top of cell + ascent (in flipped coords, need to flip for CG)
+                let baselineY = y + fontAscent
                 ctx.translateBy(x: x, y: baselineY)
                 ctx.scaleBy(x: 1.0, y: -1.0)
                 ctx.textPosition = .zero
@@ -199,6 +215,7 @@ class TerminalMetalView: NSView, CALayerDelegate {
             }
         }
 
+        // Cursor
         if term_session_cursor_visible(session) != 0 {
             var cursorRow: UInt32 = 0
             var cursorCol: UInt32 = 0
@@ -220,8 +237,6 @@ class TerminalMetalView: NSView, CALayerDelegate {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     deinit {
-        if let dl = displayLink {
-            CVDisplayLinkStop(dl)
-        }
+        if let dl = displayLink { CVDisplayLinkStop(dl) }
     }
 }
