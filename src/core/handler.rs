@@ -62,6 +62,12 @@ pub struct Terminal {
     pub mouse_encoding: MouseEncoding,
     /// Keypad application mode
     pub keypad_app: bool,
+    /// OSC 7 working directory (latest)
+    pub osc7_cwd: Option<String>,
+    /// OSC 133 shell integration data (latest)
+    pub osc133_data: Option<String>,
+    /// OSC 52 clipboard data (latest)
+    pub osc52_data: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -109,6 +115,9 @@ impl Terminal {
             mouse_mode: MouseMode::Off,
             mouse_encoding: MouseEncoding::X10,
             keypad_app: false,
+            osc7_cwd: None,
+            osc133_data: None,
+            osc52_data: None,
         }
     }
 
@@ -677,8 +686,20 @@ impl Terminal {
         if let Some(rest) = s.strip_prefix("0;").or_else(|| s.strip_prefix("2;")) {
             self.title = rest.to_string();
         }
-        // OSC 1; — icon name (ignore)
-        // OSC 52; — clipboard (TODO)
+        // OSC 7 — working directory
+        if s.starts_with("7;") {
+            if let Some(url) = s.strip_prefix("7;") {
+                self.osc7_cwd = Some(url.to_string());
+            }
+        }
+        // OSC 133 — shell integration (FinalTerm)
+        if let Some(rest) = s.strip_prefix("133;") {
+            self.osc133_data = Some(rest.to_string());
+        }
+        // OSC 52 — clipboard
+        if s.starts_with("52;") {
+            self.osc52_data = Some(s.to_string());
+        }
     }
 
     pub fn resize(&mut self, cols: usize, rows: usize) {
@@ -1408,5 +1429,29 @@ mod tests {
         t.feed_bytes(&mut p, b"\x1b[?6h");
         t.feed_bytes(&mut p, b"\x1b[1;1H");
         assert_eq!(t.grid.cursor_row, 2);
+    }
+
+    #[test]
+    fn test_osc7_working_dir() {
+        let mut t = Terminal::new(40, 5);
+        let mut p = VtParser::new();
+        t.feed_bytes(&mut p, b"\x1b]7;file://hostname/home/user\x07");
+        assert_eq!(t.osc7_cwd, Some("file://hostname/home/user".into()));
+    }
+
+    #[test]
+    fn test_osc133_shell_integration() {
+        let mut t = Terminal::new(40, 5);
+        let mut p = VtParser::new();
+        t.feed_bytes(&mut p, b"\x1b]133;A\x07");
+        assert_eq!(t.osc133_data, Some("A".into()));
+    }
+
+    #[test]
+    fn test_osc52_clipboard() {
+        let mut t = Terminal::new(40, 5);
+        let mut p = VtParser::new();
+        t.feed_bytes(&mut p, b"\x1b]52;c;aGVsbG8=\x07");
+        assert_eq!(t.osc52_data, Some("52;c;aGVsbG8=".into()));
     }
 }

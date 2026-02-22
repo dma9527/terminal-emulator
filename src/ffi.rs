@@ -11,6 +11,13 @@ pub struct TermSession {
     terminal: Terminal,
     parser: VtParser,
     pty: Option<PtyManager>,
+    renderer: Option<GpuRenderer>,
+}
+
+/// GPU renderer state, initialized lazily when a Metal layer is provided.
+struct GpuRenderer {
+    render_state: crate::renderer::pipeline::RenderState,
+    atlas: crate::renderer::atlas::GlyphAtlas,
 }
 
 #[no_mangle]
@@ -19,6 +26,7 @@ pub extern "C" fn term_session_new(cols: c_uint, rows: c_uint) -> *mut TermSessi
         terminal: Terminal::new(cols as usize, rows as usize),
         parser: VtParser::new(),
         pty: None,
+        renderer: None,
     });
     Box::into_raw(session)
 }
@@ -238,4 +246,171 @@ pub extern "C" fn term_session_cursor_visible(session: *const TermSession) -> c_
 pub extern "C" fn term_session_bracketed_paste(session: *const TermSession) -> c_int {
     let session = unsafe { &*session };
     session.terminal.bracketed_paste as c_int
+}
+
+/// Initialize GPU renderer with a CAMetalLayer pointer (macOS).
+/// Returns 0 on success, -1 on failure.
+#[no_mangle]
+pub extern "C" fn term_session_init_gpu(
+    session: *mut TermSession,
+    metal_layer: *mut std::ffi::c_void,
+    width: u32,
+    height: u32,
+) -> c_int {
+    let session = unsafe { &mut *session };
+    if metal_layer.is_null() { return -1; }
+
+    let result = pollster::block_on(async {
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::METAL,
+            ..Default::default()
+        });
+
+        let surface = unsafe {
+            instance.create_surface_unsafe(
+                wgpu::SurfaceTargetUnsafe::CoreAnimationLayer(metal_layer)
+            )
+        };
+        let surface = match surface {
+            Ok(s) => s,
+            Err(_) => return -1,
+        };
+
+        let adapter = match instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            compatible_surface: Some(&surface),
+            force_fallback_adapter: false,
+        }).await {
+            Some(a) => a,
+            None => return -1,
+        };
+
+        let (device, queue) = match adapter.request_device(
+            &wgpu::DeviceDescriptor { label: Some("term-gpu"), ..Default::default() },
+            None,
+        ).await {
+            Ok(dq) => dq,
+            Err(_) => return -1,
+        };
+
+        let caps = surface.get_capabilities(&adapter);
+        let format = caps.formats.iter()
+            .find(|f| f.is_srgb())
+            .copied()
+            .unwrap_or(caps.formats[0]);
+
+        let config = wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format,
+            width,
+            height,
+            present_mode: wgpu::PresentMode::Fifo,
+            alpha_mode: caps.alpha_modes[0],
+            view_formats: vec![],
+            desired_maximum_frame_latency: 2,
+        };
+        surface.configure(&device, &config);
+
+        let font_data = include_bytes!("/System/Library/Fonts/Menlo.ttc");
+        let atlas = crate::renderer::atlas::GlyphAtlas::new(font_data, 14.0);
+        let max_cells = (width / 8) as usize * (height / 16) as usize + 256;
+        let render_state = crate::renderer::pipeline::RenderState::new_with_surface(
+            device, queue, surface, config, &atlas, format, max_cells,
+        );
+
+        session.renderer = Some(GpuRenderer { render_state, atlas });
+        0
+    });
+    result
+}
+
+/// Render the terminal grid using GPU. Returns 0 on success.
+#[no_mangle]
+pub extern "C" fn term_session_render_gpu(
+    session: *mut TermSession,
+    width: u32,
+    height: u32,
+) -> c_int {
+    let session = unsafe { &mut *session };
+    let Some(renderer) = &mut session.renderer else { return -1 };
+
+    let (vertices, indices) = renderer.render_state.build_vertices(
+        &session.terminal.grid,
+        &mut renderer.atlas,
+        width as f32,
+        height as f32,
+    );
+
+    if vertices.is_empty() { return 0; }
+
+    renderer.render_state.update_atlas(&mut renderer.atlas);
+
+    // Upload vertex/index data
+    renderer.render_state.queue.write_buffer(
+        &renderer.render_state.vertex_buffer,
+        0,
+        bytemuck::cast_slice(&vertices),
+    );
+    renderer.render_state.queue.write_buffer(
+        &renderer.render_state.index_buffer,
+        0,
+        bytemuck::cast_slice(&indices),
+    );
+
+    // Render
+    let surface = match &renderer.render_state.surface {
+        Some(s) => s,
+        None => return -1,
+    };
+    let frame = match surface.get_current_texture() {
+        Ok(f) => f,
+        Err(_) => return -1,
+    };
+    let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let mut encoder = renderer.render_state.device.create_command_encoder(
+        &wgpu::CommandEncoderDescriptor { label: Some("render") },
+    );
+
+    {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("terminal"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            ..Default::default()
+        });
+        pass.set_pipeline(&renderer.render_state.pipeline);
+        pass.set_bind_group(0, &renderer.render_state.atlas_bind_group, &[]);
+        pass.set_vertex_buffer(0, renderer.render_state.vertex_buffer.slice(..));
+        pass.set_index_buffer(renderer.render_state.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+        pass.draw_indexed(0..indices.len() as u32, 0, 0..1);
+    }
+
+    renderer.render_state.queue.submit(std::iter::once(encoder.finish()));
+    frame.present();
+    0
+}
+
+/// Resize the GPU surface.
+#[no_mangle]
+pub extern "C" fn term_session_resize_gpu(
+    session: *mut TermSession,
+    width: u32,
+    height: u32,
+) {
+    let session = unsafe { &mut *session };
+    let Some(renderer) = &mut session.renderer else { return };
+    if let Some(config) = &mut renderer.render_state.config {
+        config.width = width.max(1);
+        config.height = height.max(1);
+        if let Some(surface) = &renderer.render_state.surface {
+            surface.configure(&renderer.render_state.device, config);
+        }
+    }
 }

@@ -1,11 +1,18 @@
 import Cocoa
+import QuartzCore
 
-/// NSView that renders the terminal grid and handles keyboard input.
-class TerminalMetalView: NSView {
+/// Terminal view using Metal GPU rendering via libterm's wgpu backend.
+/// Falls back to CoreGraphics if GPU init fails.
+class TerminalMetalView: NSView, CALayerDelegate {
     var session: OpaquePointer?
     var cols: Int = 80
     var rows: Int = 24
 
+    private var metalLayer: CAMetalLayer?
+    private var gpuReady = false
+    private var displayLink: CVDisplayLink?
+
+    // CG fallback
     private let cellWidth: CGFloat = 8.4
     private let cellHeight: CGFloat = 16.0
     private let fontSize: CGFloat = 14.0
@@ -14,10 +21,84 @@ class TerminalMetalView: NSView {
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
 
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func makeBackingLayer() -> CALayer {
+        let layer = CAMetalLayer()
+        layer.device = MTLCreateSystemDefaultDevice()
+        layer.pixelFormat = .bgra8Unorm_srgb
+        layer.framebufferOnly = true
+        layer.contentsScale = NSScreen.main?.backingScaleFactor ?? 2.0
+        metalLayer = layer
+        return layer
+    }
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         window?.makeFirstResponder(self)
+        initGPU()
+        startDisplayLink()
     }
+
+    private func initGPU() {
+        guard let session = session, let layer = metalLayer else { return }
+        let bounds = self.bounds
+        let scale = window?.backingScaleFactor ?? 2.0
+        let w = UInt32(bounds.width * scale)
+        let h = UInt32(bounds.height * scale)
+        let ptr = Unmanaged.passUnretained(layer).toOpaque()
+        let result = term_session_init_gpu(session, ptr, w, h)
+        gpuReady = (result == 0)
+        if !gpuReady {
+            NSLog("GPU init failed, falling back to CoreGraphics")
+        }
+    }
+
+    private func startDisplayLink() {
+        var dl: CVDisplayLink?
+        CVDisplayLinkCreateWithActiveCGDisplays(&dl)
+        guard let dl = dl else { return }
+
+        CVDisplayLinkSetOutputCallback(dl, { (_, _, _, _, _, userInfo) -> CVReturn in
+            let view = Unmanaged<TerminalMetalView>.fromOpaque(userInfo!).takeUnretainedValue()
+            DispatchQueue.main.async { view.renderFrame() }
+            return kCVReturnSuccess
+        }, Unmanaged.passUnretained(self).toOpaque())
+
+        CVDisplayLinkStart(dl)
+        displayLink = dl
+    }
+
+    private func renderFrame() {
+        guard let session = session else { return }
+        if gpuReady {
+            let scale = window?.backingScaleFactor ?? 2.0
+            let w = UInt32(bounds.width * scale)
+            let h = UInt32(bounds.height * scale)
+            metalLayer?.drawableSize = CGSize(width: CGFloat(w), height: CGFloat(h))
+            term_session_render_gpu(session, w, h)
+        } else {
+            setNeedsDisplay(bounds)
+        }
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        guard let session = session else { return }
+        if gpuReady {
+            let scale = window?.backingScaleFactor ?? 2.0
+            let w = UInt32(newSize.width * scale)
+            let h = UInt32(newSize.height * scale)
+            term_session_resize_gpu(session, w, h)
+        }
+    }
+
+    // MARK: - Keyboard
 
     override func keyDown(with event: NSEvent) {
         guard let session = session else { return }
@@ -61,7 +142,6 @@ class TerminalMetalView: NSView {
         }
     }
 
-    // Prevent system beep on key press
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if event.modifierFlags.contains(.command) {
             return super.performKeyEquivalent(with: event)
@@ -69,7 +149,10 @@ class TerminalMetalView: NSView {
         return false
     }
 
+    // MARK: - CoreGraphics Fallback
+
     override func draw(_ dirtyRect: NSRect) {
+        guard !gpuReady else { return } // GPU handles rendering
         guard let ctx = NSGraphicsContext.current?.cgContext,
               let session = session else { return }
 
@@ -116,12 +199,10 @@ class TerminalMetalView: NSView {
             }
         }
 
-        // Cursor
         if term_session_cursor_visible(session) != 0 {
             var cursorRow: UInt32 = 0
             var cursorCol: UInt32 = 0
             term_session_cursor_pos(session, &cursorRow, &cursorCol)
-
             let cursorX = CGFloat(cursorCol) * cellWidth
             let cursorY = CGFloat(cursorRow) * cellHeight
             ctx.setFillColor(CGColor(red: 0.8, green: 0.8, blue: 0.8, alpha: 0.7))
@@ -137,4 +218,10 @@ class TerminalMetalView: NSView {
     }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    deinit {
+        if let dl = displayLink {
+            CVDisplayLinkStop(dl)
+        }
+    }
 }

@@ -36,3 +36,9 @@ All notable changes to this project will be documented in this file.
 - Shell integration: OSC 133 protocol (FinalTerm/iTerm2 compatible), command boundary detection, exit code tracking, duration measurement, prompt navigation, working directory via OSC 7, bash/zsh init scripts (9 tests)
 - Cross-platform keybindings: unified Super modifier (Cmd on macOS, Ctrl on Linux), 17 default bindings, custom overrides, platform-aware display strings (7 tests)
 - Portable config: export/import config + theme + keybindings as JSON bundle for cross-machine sync (3 tests)
+
+### Changed — GPU Rendering + Shell Integration
+
+- macOS app: Metal GPU rendering via wgpu (CAMetalLayer + CVDisplayLink), with CoreGraphics fallback
+- FFI: `term_session_init_gpu`, `term_session_render_gpu`, `term_session_resize_gpu` for native GPU surface
+- Terminal handler: OSC 7 (working directory), OSC 133 (shell integration), OSC 52 (clipboard) dispatch (3 tests)
