@@ -3,6 +3,10 @@ pub mod pty;
 pub mod renderer;
 pub mod platform;
 pub mod ffi;
+pub mod config;
+pub mod theme;
+pub mod clipboard;
+pub mod watcher;
 
 #[no_mangle]
 pub extern "C" fn libterm_version() -> *const std::ffi::c_char {

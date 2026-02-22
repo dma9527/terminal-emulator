@@ -24,6 +24,8 @@ env_logger = "0.11"
 bytemuck = { version = "1", features = ["derive"] }
 bitflags = "2"
 pollster = "0.4"
+toml = "1.0.3"
+serde = { version = "1.0.228", features = ["derive"] }
 
 [profile.release]
 opt-level = 3

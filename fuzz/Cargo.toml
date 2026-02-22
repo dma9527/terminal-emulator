@@ -1,0 +1,17 @@
+[package]
+name = "terminal-emulator-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+libterm = { path = "..", package = "terminal-emulator" }
+
+[[bin]]
+name = "fuzz_vt_parser"
+path = "fuzz_targets/fuzz_vt_parser.rs"
+doc = false
