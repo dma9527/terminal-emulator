@@ -14,3 +14,11 @@ All notable changes to this project will be documented in this file.
 - Homebrew formula: `Formula/term.rb` for macOS distribution
 - Documentation: getting started guide with config reference, keybindings, themes, testing, fuzzing
 - Community: CONTRIBUTING.md, LICENSE (MIT), issue templates
+
+### Added — Phase 5: Beta & Linux
+
+- Scrollback search: literal + regex search across visible grid and scrollback buffer (7 tests)
+- URL detection: auto-detect https/http URLs in grid, position lookup, trailing punctuation stripping (5 tests)
+- Dirty region tracking: incremental rendering — only redraw changed rows (5 tests)
+- Session save/restore: JSON-based session persistence with working dir, shell, scrollback (3 tests)
+- Linux GTK4 scaffold: Cargo project, README with build instructions, architecture docs

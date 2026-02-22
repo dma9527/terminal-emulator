@@ -72,6 +72,8 @@ impl Grid {
     pub fn cols(&self) -> usize { self.cols }
     pub fn rows(&self) -> usize { self.rows }
 
+    pub fn scrollback(&self) -> &[Vec<Cell>] { &self.scrollback }
+
     pub fn cell(&self, row: usize, col: usize) -> &Cell {
         &self.cells[row * self.cols + col]
     }
