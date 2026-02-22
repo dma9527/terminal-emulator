@@ -11,6 +11,11 @@ pub mod search;
 pub mod url_detect;
 pub mod dirty;
 pub mod session;
+pub mod bench;
+pub mod security;
+pub mod image;
+pub mod pane;
+pub mod plugin;
 
 #[no_mangle]
 pub extern "C" fn libterm_version() -> *const std::ffi::c_char {

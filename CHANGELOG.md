@@ -22,3 +22,11 @@ All notable changes to this project will be documented in this file.
 - Dirty region tracking: incremental rendering — only redraw changed rows (5 tests)
 - Session save/restore: JSON-based session persistence with working dir, shell, scrollback (3 tests)
 - Linux GTK4 scaffold: Cargo project, README with build instructions, architecture docs
+
+### Added — Phase 6: 1.0 Launch
+
+- Performance benchmarks: parser throughput, grid scroll, resize, startup time with threshold assertions (3 tests)
+- Security: OSC sanitization, paste sanitization, URL safety checks (4 tests)
+- Inline images: Kitty graphics protocol parser, image placement manager (7 tests)
+- Built-in multiplexer: pane split (horizontal/vertical), nested splits, focus management, layout tree (6 tests)
+- Plugin system: registration, event hooks, enable/disable, plugin directory convention (5 tests)
