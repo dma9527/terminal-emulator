@@ -12,6 +12,7 @@ pub struct TermSession {
     parser: VtParser,
     pty: Option<PtyManager>,
     renderer: Option<GpuRenderer>,
+    config: crate::config::Config,
 }
 
 /// GPU renderer state, initialized lazily when a Metal layer is provided.
@@ -22,11 +23,13 @@ struct GpuRenderer {
 
 #[no_mangle]
 pub extern "C" fn term_session_new(cols: c_uint, rows: c_uint) -> *mut TermSession {
+    let config = crate::config::Config::load();
     let session = Box::new(TermSession {
         terminal: Terminal::new(cols as usize, rows as usize),
         parser: VtParser::new(),
         pty: None,
         renderer: None,
+        config,
     });
     Box::into_raw(session)
 }
@@ -246,6 +249,21 @@ pub extern "C" fn term_session_cursor_visible(session: *const TermSession) -> c_
 pub extern "C" fn term_session_bracketed_paste(session: *const TermSession) -> c_int {
     let session = unsafe { &*session };
     session.terminal.bracketed_paste as c_int
+}
+
+/// Get configured font size.
+#[no_mangle]
+pub extern "C" fn term_session_font_size(session: *const TermSession) -> f32 {
+    let session = unsafe { &*session };
+    session.config.font.size
+}
+
+/// Get configured font family. Caller must free with term_string_free.
+#[no_mangle]
+pub extern "C" fn term_session_font_family(session: *const TermSession) -> *mut c_char {
+    let session = unsafe { &*session };
+    let c_str = std::ffi::CString::new(session.config.font.family.as_str()).unwrap_or_default();
+    c_str.into_raw()
 }
 
 /// Initialize GPU renderer with a CAMetalLayer pointer (macOS).

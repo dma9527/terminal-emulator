@@ -45,6 +45,10 @@ int term_session_cursor_keys_app(const TermSession* session);
 int term_session_cursor_visible(const TermSession* session);
 int term_session_bracketed_paste(const TermSession* session);
 
+// Config
+float term_session_font_size(const TermSession* session);
+char* term_session_font_family(const TermSession* session);
+
 // GPU rendering
 int term_session_init_gpu(TermSession* session, void* metal_layer,
                           uint32_t width, uint32_t height);

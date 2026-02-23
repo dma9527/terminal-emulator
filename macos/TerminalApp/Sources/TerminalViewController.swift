@@ -20,6 +20,14 @@ class TerminalViewController: NSViewController {
         session = term_session_new(defaultCols, defaultRows)
         guard let session = session else { return }
 
+        // Apply font config from config.toml
+        let size = CGFloat(term_session_font_size(session))
+        if let familyPtr = term_session_font_family(session) {
+            let family = String(cString: familyPtr)
+            term_string_free(familyPtr)
+            terminalView.setupFont(family: family, size: size)
+        }
+
         let result = term_session_spawn_shell(session, nil)
         guard result == 0 else {
             NSLog("Failed to spawn shell")
