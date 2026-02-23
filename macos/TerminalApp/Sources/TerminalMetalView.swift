@@ -62,19 +62,17 @@ class TerminalMetalView: NSView, CALayerDelegate {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        window?.makeFirstResponder(self)
-        if let scale = window?.backingScaleFactor {
-            metalLayer?.contentsScale = scale
+        if window != nil {
+            window?.makeFirstResponder(self)
+            initGPU()
+            if displayLink == nil { startDisplayLink() }
+        } else {
+            stopDisplayLink()
         }
-        initGPU()
-        startDisplayLink()
     }
 
     private func initGPU() {
         guard let session = session else { return }
-        // GPU rendering disabled until Rust atlas font size matches Swift metrics.
-        // CG fallback provides correct font rendering for now.
-        // TODO: pass font size to Rust via FFI, rebuild atlas at correct size
         gpuReady = false
     }
 
@@ -84,13 +82,21 @@ class TerminalMetalView: NSView, CALayerDelegate {
         guard let dl = dl else { return }
 
         CVDisplayLinkSetOutputCallback(dl, { (_, _, _, _, _, userInfo) -> CVReturn in
-            let view = Unmanaged<TerminalMetalView>.fromOpaque(userInfo!).takeUnretainedValue()
-            DispatchQueue.main.async { view.renderFrame() }
+            guard let userInfo = userInfo else { return kCVReturnSuccess }
+            let view = Unmanaged<TerminalMetalView>.fromOpaque(userInfo).takeUnretainedValue()
+            DispatchQueue.main.async { [weak view] in view?.renderFrame() }
             return kCVReturnSuccess
         }, Unmanaged.passUnretained(self).toOpaque())
 
         CVDisplayLinkStart(dl)
         displayLink = dl
+    }
+
+    func stopDisplayLink() {
+        if let dl = displayLink {
+            CVDisplayLinkStop(dl)
+            displayLink = nil
+        }
     }
 
     private func renderFrame() {

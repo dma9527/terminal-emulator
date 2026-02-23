@@ -163,6 +163,7 @@ class TerminalViewController: NSViewController {
     }
 
     func cleanup() {
+        terminalView?.stopDisplayLink()
         ptySource?.cancel()
         ptySource = nil
         if let session = session {
