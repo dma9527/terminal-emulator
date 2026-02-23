@@ -244,6 +244,37 @@ class TerminalMetalView: NSView, CALayerDelegate {
             return
         }
 
+        // Opt+Up/Down — prompt navigation
+        if event.modifierFlags.contains(.option) {
+            if let session = self.session {
+                switch event.keyCode {
+                case 126: // Opt+Up — previous prompt
+                    let viewRow = UInt32(max(0, Int(rows) - 1 - scrollOffset))
+                    let target = term_session_prev_prompt(session, viewRow)
+                    if target >= 0 {
+                        let gridRows = Int(rows)
+                        scrollOffset = max(0, gridRows - 1 - Int(target))
+                        let sbLen = Int(term_session_scrollback_len(session))
+                        scrollOffset = min(scrollOffset, sbLen)
+                        setNeedsDisplay(bounds)
+                    }
+                    return
+                case 125: // Opt+Down — next prompt or back to bottom
+                    let viewRow = UInt32(max(0, Int(rows) - 1 - scrollOffset))
+                    let target = term_session_next_prompt(session, viewRow)
+                    if target >= 0 && scrollOffset > 0 {
+                        let gridRows = Int(rows)
+                        scrollOffset = max(0, gridRows - 1 - Int(target))
+                        setNeedsDisplay(bounds)
+                    } else {
+                        scrollToBottom()
+                    }
+                    return
+                default: break
+                }
+            }
+        }
+
         // Special keys — handle directly (only when IME is NOT composing)
         let appMode = term_session_cursor_keys_app(session) != 0
         switch event.keyCode {
@@ -283,40 +314,19 @@ class TerminalMetalView: NSView, CALayerDelegate {
         guard let session = session else { return super.performKeyEquivalent(with: event) }
 
         if event.modifierFlags.contains(.command) {
-            // Cmd+Shift+Up/Down — prompt navigation
-            if event.modifierFlags.contains(.shift) {
-                switch event.keyCode {
-                case 126: // Up
-                    if let session = self.session {
-                        var curRow: UInt32 = 0
-                        var curCol: UInt32 = 0
-                        term_session_cursor_pos(session, &curRow, &curCol)
-                        let target = term_session_prev_prompt(session, curRow + UInt32(scrollOffset))
-                        if target >= 0 {
-                            let sbLen = Int(term_session_scrollback_len(session))
-                            let targetRow = Int(target)
-                            // Calculate scroll offset to show this prompt at top
-                            scrollOffset = max(0, min(sbLen, scrollOffset + Int(curRow) - targetRow))
-                            setNeedsDisplay(bounds)
-                        }
-                    }
-                    return true
-                case 125: // Down
-                    if let session = self.session {
-                        var curRow: UInt32 = 0
-                        var curCol: UInt32 = 0
-                        term_session_cursor_pos(session, &curRow, &curCol)
-                        let target = term_session_next_prompt(session, curRow >= UInt32(scrollOffset) ? curRow - UInt32(scrollOffset) : 0)
-                        if target >= 0 {
-                            scrollOffset = max(0, scrollOffset - (Int(target) - Int(curRow)))
-                            setNeedsDisplay(bounds)
-                        } else {
-                            scrollToBottom()
-                        }
-                    }
-                    return true
-                default: break
+            // Cmd+Shift+Up/Down — reserved by macOS, don't use
+            // Cmd+Home/End — scroll to top/bottom
+            switch event.keyCode {
+            case 115: // Home
+                if let session = self.session {
+                    scrollOffset = Int(term_session_scrollback_len(session))
+                    setNeedsDisplay(bounds)
                 }
+                return true
+            case 119: // End
+                scrollToBottom()
+                return true
+            default: break
             }
 
             switch event.charactersIgnoringModifiers {
