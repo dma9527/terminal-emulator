@@ -449,6 +449,81 @@ class TerminalMetalView: NSView, CALayerDelegate {
 
         // Selection highlight
         drawSelection(ctx)
+
+        // Command decorations (duration + exit code)
+        drawCommandDecorations(ctx)
+    }
+
+    private func drawCommandDecorations(_ ctx: CGContext) {
+        guard let session = session else { return }
+        let count = Int(term_session_command_count(session))
+        guard count > 0 else { return }
+
+        let viewWidth = bounds.width
+
+        for i in 0..<count {
+            let promptRow = term_session_command_prompt_row(session, UInt32(i))
+            guard promptRow >= 0 else { continue }
+
+            // Adjust for scroll offset
+            let screenRow = Int(promptRow) + scrollOffset
+            guard screenRow >= 0 && screenRow < rows else { continue }
+
+            let exitCode = term_session_command_exit_code(session, UInt32(i))
+            let durationMs = term_session_command_duration_ms(session, UInt32(i))
+
+            // Build decoration string
+            var parts: [String] = []
+            if durationMs > 0 {
+                if durationMs < 1000 {
+                    parts.append("\(durationMs)ms")
+                } else if durationMs < 60000 {
+                    parts.append(String(format: "%.1fs", Double(durationMs) / 1000.0))
+                } else {
+                    let mins = durationMs / 60000
+                    let secs = (durationMs % 60000) / 1000
+                    parts.append("\(mins)m\(secs)s")
+                }
+            }
+
+            if exitCode > 0 {
+                parts.append("✘ \(exitCode)")
+            } else if exitCode == 0 && durationMs > 0 {
+                parts.append("✔")
+            }
+
+            guard !parts.isEmpty else { continue }
+            let text = parts.joined(separator: " ")
+
+            // Draw right-aligned
+            let color: NSColor = exitCode > 0
+                ? NSColor(red: 1.0, green: 0.3, blue: 0.3, alpha: 0.8)
+                : NSColor(red: 0.5, green: 0.5, blue: 0.5, alpha: 0.6)
+
+            let attrs: [NSAttributedString.Key: Any] = [
+                .font: CTFontCreateWithName("Menlo" as CFString, fontSize * 0.85, nil) as Any,
+                .foregroundColor: color,
+            ]
+            let attrStr = NSAttributedString(string: text, attributes: attrs)
+            let line = CTLineCreateWithAttributedString(attrStr)
+            let lineWidth = CTLineGetTypographicBounds(line, nil, nil, nil)
+
+            let x = viewWidth - CGFloat(lineWidth) - 8
+            let y = CGFloat(screenRow) * cellHeight
+
+            ctx.saveGState()
+            ctx.translateBy(x: x, y: y + fontAscent)
+            ctx.scaleBy(x: 1.0, y: -1.0)
+            ctx.textPosition = .zero
+            CTLineDraw(line, ctx)
+            ctx.restoreGState()
+
+            // Red left border for failed commands
+            if exitCode > 0 {
+                ctx.setFillColor(CGColor(red: 1.0, green: 0.2, blue: 0.2, alpha: 0.6))
+                ctx.fill(CGRect(x: 0, y: y, width: 3, height: cellHeight))
+            }
+        }
     }
 
     private func colorFromRGB(_ rgb: UInt32) -> CGColor {

@@ -370,6 +370,30 @@ pub extern "C" fn term_session_command_count(session: *const TermSession) -> c_u
     session.terminal.shell.history().len() as c_uint
 }
 
+/// Get command info by index. Returns prompt_row, or -1 if invalid.
+#[no_mangle]
+pub extern "C" fn term_session_command_prompt_row(session: *const TermSession, idx: c_uint) -> c_int {
+    let session = unsafe { &*session };
+    session.terminal.shell.history().get(idx as usize)
+        .map(|c| c.prompt_row as c_int).unwrap_or(-1)
+}
+
+/// Get command exit code by index. Returns -1 if invalid/unknown.
+#[no_mangle]
+pub extern "C" fn term_session_command_exit_code(session: *const TermSession, idx: c_uint) -> c_int {
+    let session = unsafe { &*session };
+    session.terminal.shell.history().get(idx as usize)
+        .and_then(|c| c.exit_code).unwrap_or(-1) as c_int
+}
+
+/// Get command duration in milliseconds by index. Returns 0 if unknown.
+#[no_mangle]
+pub extern "C" fn term_session_command_duration_ms(session: *const TermSession, idx: c_uint) -> u64 {
+    let session = unsafe { &*session };
+    session.terminal.shell.history().get(idx as usize)
+        .and_then(|c| c.duration).map(|d| d.as_millis() as u64).unwrap_or(0)
+}
+
 /// Get working directory. Caller must free with term_string_free.
 #[no_mangle]
 pub extern "C" fn term_session_working_dir(session: *const TermSession) -> *mut c_char {
