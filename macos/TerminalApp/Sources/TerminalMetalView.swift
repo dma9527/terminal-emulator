@@ -260,6 +260,16 @@ class TerminalMetalView: NSView, CALayerDelegate {
                     }
                 }
                 return true
+            case "=" where event.modifierFlags.contains(.command): // Cmd+= zoom in
+                fontSize = min(fontSize + 1, 32)
+                setupFont(family: fontFamily, size: fontSize)
+                (self.window?.contentViewController as? TerminalViewController)?.fontChanged()
+                return true
+            case "-" where event.modifierFlags.contains(.command): // Cmd+- zoom out
+                fontSize = max(fontSize - 1, 8)
+                setupFont(family: fontFamily, size: fontSize)
+                (self.window?.contentViewController as? TerminalViewController)?.fontChanged()
+                return true
             default:
                 break
             }

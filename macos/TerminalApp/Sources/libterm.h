@@ -53,6 +53,9 @@ uint32_t term_session_window_height(const TermSession* session);
 uint32_t term_session_theme_bg(const TermSession* session);
 uint32_t term_session_theme_fg(const TermSession* session);
 
+// Config hot-reload
+uint64_t term_session_poll_config(TermSession* session);
+
 // Selection
 char* term_session_extract_text(const TermSession* session,
     uint32_t start_row, uint32_t start_col,

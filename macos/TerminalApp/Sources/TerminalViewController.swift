@@ -63,6 +63,8 @@ class TerminalViewController: NSViewController {
         updateTerminalSize()
     }
 
+    private var lastConfigGen: UInt64 = 0
+
     private func readPTY() {
         guard let session = session else { return }
         let bytesRead = term_session_read_pty(session)
@@ -73,6 +75,32 @@ class TerminalViewController: NSViewController {
             ptySource?.cancel()
             ptySource = nil
         }
+
+        // Poll config hot-reload
+        let gen = term_session_poll_config(session)
+        if gen > 0 && gen != lastConfigGen {
+            lastConfigGen = gen
+            applyConfig()
+        }
+    }
+
+    private func applyConfig() {
+        guard let session = session else { return }
+        let size = CGFloat(term_session_font_size(session))
+        if let familyPtr = term_session_font_family(session) {
+            let family = String(cString: familyPtr)
+            term_string_free(familyPtr)
+            terminalView.setupFont(family: family, size: size)
+        }
+        let bgRGB = term_session_theme_bg(session)
+        terminalView.themeBgColor = CGColor(
+            red: CGFloat((bgRGB >> 16) & 0xFF) / 255.0,
+            green: CGFloat((bgRGB >> 8) & 0xFF) / 255.0,
+            blue: CGFloat(bgRGB & 0xFF) / 255.0,
+            alpha: 1.0
+        )
+        updateTerminalSize()
+        terminalView.setNeedsDisplay(terminalView.bounds)
     }
 
     private func updateTitle() {
@@ -105,6 +133,10 @@ class TerminalViewController: NSViewController {
             terminalView.rows = Int(rows)
             terminalView.setNeedsDisplay(terminalView.bounds)
         }
+    }
+
+    func fontChanged() {
+        updateTerminalSize()
     }
 
     func cleanup() {

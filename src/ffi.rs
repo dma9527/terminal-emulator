@@ -13,6 +13,8 @@ pub struct TermSession {
     pty: Option<PtyManager>,
     renderer: Option<GpuRenderer>,
     config: crate::config::Config,
+    watcher: crate::watcher::ConfigWatcher,
+    config_generation: u64,
 }
 
 /// GPU renderer state, initialized lazily when a Metal layer is provided.
@@ -36,6 +38,8 @@ pub extern "C" fn term_session_new(cols: c_uint, rows: c_uint) -> *mut TermSessi
         pty: None,
         renderer: None,
         config,
+        watcher: crate::watcher::ConfigWatcher::new(),
+        config_generation: 0,
     });
     Box::into_raw(session)
 }
@@ -301,6 +305,23 @@ pub extern "C" fn term_session_theme_fg(session: *const TermSession) -> u32 {
     let theme = crate::theme::Theme::by_name(&session.config.colors.theme)
         .unwrap_or_else(crate::theme::Theme::default_dark);
     (theme.fg.r as u32) << 16 | (theme.fg.g as u32) << 8 | theme.fg.b as u32
+}
+
+/// Poll for config changes. Returns new generation number if config changed, 0 if not.
+#[no_mangle]
+pub extern "C" fn term_session_poll_config(session: *mut TermSession) -> u64 {
+    let session = unsafe { &mut *session };
+    if let Some(new_config) = session.watcher.poll() {
+        let theme = crate::theme::Theme::by_name(&new_config.colors.theme)
+            .unwrap_or_else(crate::theme::Theme::default_dark);
+        session.terminal.set_default_colors(theme.fg, theme.bg);
+        session.terminal.grid.set_scrollback_max(new_config.scrollback);
+        session.config = new_config;
+        session.config_generation += 1;
+        session.config_generation
+    } else {
+        0
+    }
 }
 
 /// Extract text from grid between two positions (for selection copy).
