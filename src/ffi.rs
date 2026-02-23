@@ -303,6 +303,33 @@ pub extern "C" fn term_session_theme_fg(session: *const TermSession) -> u32 {
     (theme.fg.r as u32) << 16 | (theme.fg.g as u32) << 8 | theme.fg.b as u32
 }
 
+/// Extract text from grid between two positions (for selection copy).
+#[no_mangle]
+pub extern "C" fn term_session_extract_text(
+    session: *const TermSession,
+    start_row: c_uint, start_col: c_uint,
+    end_row: c_uint, end_col: c_uint,
+) -> *mut c_char {
+    let session = unsafe { &*session };
+    let grid = &session.terminal.grid;
+    let mut text = String::new();
+
+    let (sr, sc) = (start_row as usize, start_col as usize);
+    let (er, ec) = (end_row as usize, end_col as usize);
+
+    for row in sr..=er.min(grid.rows() - 1) {
+        let col_start = if row == sr { sc } else { 0 };
+        let col_end = if row == er { ec } else { grid.cols() };
+        for col in col_start..col_end.min(grid.cols()) {
+            let ch = grid.cell(row, col).ch;
+            if ch != '\0' { text.push(ch); }
+        }
+        if row != er { text = text.trim_end().to_string(); text.push('\n'); }
+    }
+    let text = text.trim_end().to_string();
+    std::ffi::CString::new(text).unwrap_or_default().into_raw()
+}
+
 /// Initialize GPU renderer with a CAMetalLayer pointer (macOS).
 /// Returns 0 on success, -1 on failure.
 #[no_mangle]

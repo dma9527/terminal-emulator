@@ -53,7 +53,7 @@ class TerminalWindowController: NSWindowController, NSWindowDelegate {
             defer: false
         )
         newWindow.appearance = NSAppearance(named: .darkAqua)
-        newWindow.backgroundColor = NSColor.black
+        newWindow.backgroundColor = currentWindow.backgroundColor
         newWindow.titlebarAppearsTransparent = true
 
         let termVC = TerminalViewController()

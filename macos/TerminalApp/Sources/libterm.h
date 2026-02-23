@@ -53,6 +53,11 @@ uint32_t term_session_window_height(const TermSession* session);
 uint32_t term_session_theme_bg(const TermSession* session);
 uint32_t term_session_theme_fg(const TermSession* session);
 
+// Selection
+char* term_session_extract_text(const TermSession* session,
+    uint32_t start_row, uint32_t start_col,
+    uint32_t end_row, uint32_t end_col);
+
 // GPU rendering
 int term_session_init_gpu(TermSession* session, void* metal_layer,
                           uint32_t width, uint32_t height);

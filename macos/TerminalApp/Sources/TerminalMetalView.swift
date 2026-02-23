@@ -114,6 +114,86 @@ class TerminalMetalView: NSView, CALayerDelegate {
         }
     }
 
+    // MARK: - Selection
+
+    private var selectionStart: (row: Int, col: Int)?
+    private var selectionEnd: (row: Int, col: Int)?
+    private var isSelecting = false
+
+    private func gridPosition(for event: NSEvent) -> (row: Int, col: Int) {
+        let loc = convert(event.locationInWindow, from: nil)
+        let col = Int(loc.x / cellWidth)
+        let row = Int(loc.y / cellHeight)
+        return (row: max(0, row), col: max(0, col))
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let pos = gridPosition(for: event)
+        selectionStart = pos
+        selectionEnd = pos
+        isSelecting = true
+        setNeedsDisplay(bounds)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard isSelecting else { return }
+        selectionEnd = gridPosition(for: event)
+        setNeedsDisplay(bounds)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        isSelecting = false
+    }
+
+    func copySelection() {
+        guard let session = session,
+              let start = selectionStart,
+              let end = selectionEnd else { return }
+
+        // Normalize: start before end
+        let (sr, sc, er, ec): (Int, Int, Int, Int)
+        if start.row < end.row || (start.row == end.row && start.col <= end.col) {
+            (sr, sc, er, ec) = (start.row, start.col, end.row, end.col)
+        } else {
+            (sr, sc, er, ec) = (end.row, end.col, start.row, start.col)
+        }
+
+        let ptr = term_session_extract_text(session,
+            UInt32(sr), UInt32(sc), UInt32(er), UInt32(ec))
+        if let ptr = ptr {
+            let text = String(cString: ptr)
+            term_string_free(ptr)
+            if !text.isEmpty {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(text, forType: .string)
+            }
+        }
+        // Clear selection
+        selectionStart = nil
+        selectionEnd = nil
+        setNeedsDisplay(bounds)
+    }
+
+    private func drawSelection(_ ctx: CGContext) {
+        guard let start = selectionStart, let end = selectionEnd else { return }
+        let (sr, sc, er, ec): (Int, Int, Int, Int)
+        if start.row < end.row || (start.row == end.row && start.col <= end.col) {
+            (sr, sc, er, ec) = (start.row, start.col, end.row, end.col)
+        } else {
+            (sr, sc, er, ec) = (end.row, end.col, start.row, start.col)
+        }
+
+        ctx.setFillColor(CGColor(red: 0.3, green: 0.5, blue: 0.8, alpha: 0.35))
+        for row in sr...er {
+            let colStart = (row == sr) ? sc : 0
+            let colEnd = (row == er) ? ec : cols
+            let x = CGFloat(colStart) * cellWidth
+            let y = CGFloat(row) * cellHeight
+            let w = CGFloat(colEnd - colStart) * cellWidth
+            ctx.fill(CGRect(x: x, y: y, width: w, height: cellHeight))
+        }
+    }
+
     // MARK: - Keyboard
 
     override func keyDown(with event: NSEvent) {
@@ -163,8 +243,8 @@ class TerminalMetalView: NSView, CALayerDelegate {
 
         if event.modifierFlags.contains(.command) {
             switch event.charactersIgnoringModifiers {
-            case "c": // Cmd+C — copy selection (TODO: selection support)
-                // For now, copy entire last line as placeholder
+            case "c": // Cmd+C — copy selection
+                copySelection()
                 return true
             case "v": // Cmd+V — paste
                 if let text = NSPasteboard.general.string(forType: .string) {
@@ -248,6 +328,9 @@ class TerminalMetalView: NSView, CALayerDelegate {
             ctx.setFillColor(CGColor(red: 0.8, green: 0.8, blue: 0.8, alpha: 0.7))
             ctx.fill(CGRect(x: cursorX, y: cursorY, width: cellWidth, height: cellHeight))
         }
+
+        // Selection highlight
+        drawSelection(ctx)
     }
 
     private func colorFromRGB(_ rgb: UInt32) -> CGColor {
