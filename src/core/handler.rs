@@ -702,6 +702,11 @@ impl Terminal {
         }
     }
 
+    pub fn set_default_colors(&mut self, fg: Color, bg: Color) {
+        self.fg = fg;
+        self.bg = bg;
+    }
+
     pub fn resize(&mut self, cols: usize, rows: usize) {
         self.grid.resize(cols, rows);
         self.scroll_top = 0;

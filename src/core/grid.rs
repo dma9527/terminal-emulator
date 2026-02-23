@@ -74,6 +74,8 @@ impl Grid {
 
     pub fn scrollback(&self) -> &[Vec<Cell>] { &self.scrollback }
 
+    pub fn set_scrollback_max(&mut self, max: usize) { self.scrollback_max = max; }
+
     pub fn cell(&self, row: usize, col: usize) -> &Cell {
         &self.cells[row * self.cols + col]
     }

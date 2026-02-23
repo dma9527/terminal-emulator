@@ -24,8 +24,14 @@ struct GpuRenderer {
 #[no_mangle]
 pub extern "C" fn term_session_new(cols: c_uint, rows: c_uint) -> *mut TermSession {
     let config = crate::config::Config::load();
+    let theme = crate::theme::Theme::by_name(&config.colors.theme)
+        .unwrap_or_else(crate::theme::Theme::default_dark);
+    let mut terminal = Terminal::new(cols as usize, rows as usize);
+    // Apply theme colors as terminal defaults
+    terminal.set_default_colors(theme.fg, theme.bg);
+    terminal.grid.set_scrollback_max(config.scrollback);
     let session = Box::new(TermSession {
-        terminal: Terminal::new(cols as usize, rows as usize),
+        terminal,
         parser: VtParser::new(),
         pty: None,
         renderer: None,
@@ -48,7 +54,8 @@ pub extern "C" fn term_session_spawn_shell(
 ) -> c_int {
     let session = unsafe { &mut *session };
     let shell_str = if shell.is_null() {
-        None
+        // Use config shell if no explicit shell given
+        Some(session.config.shell.program.as_str())
     } else {
         unsafe { CStr::from_ptr(shell).to_str().ok() }
     };
@@ -264,6 +271,36 @@ pub extern "C" fn term_session_font_family(session: *const TermSession) -> *mut 
     let session = unsafe { &*session };
     let c_str = std::ffi::CString::new(session.config.font.family.as_str()).unwrap_or_default();
     c_str.into_raw()
+}
+
+/// Get configured window width.
+#[no_mangle]
+pub extern "C" fn term_session_window_width(session: *const TermSession) -> u32 {
+    unsafe { &*session }.config.window.width
+}
+
+/// Get configured window height.
+#[no_mangle]
+pub extern "C" fn term_session_window_height(session: *const TermSession) -> u32 {
+    unsafe { &*session }.config.window.height
+}
+
+/// Get theme background color as packed RGB.
+#[no_mangle]
+pub extern "C" fn term_session_theme_bg(session: *const TermSession) -> u32 {
+    let session = unsafe { &*session };
+    let theme = crate::theme::Theme::by_name(&session.config.colors.theme)
+        .unwrap_or_else(crate::theme::Theme::default_dark);
+    (theme.bg.r as u32) << 16 | (theme.bg.g as u32) << 8 | theme.bg.b as u32
+}
+
+/// Get theme foreground color as packed RGB.
+#[no_mangle]
+pub extern "C" fn term_session_theme_fg(session: *const TermSession) -> u32 {
+    let session = unsafe { &*session };
+    let theme = crate::theme::Theme::by_name(&session.config.colors.theme)
+        .unwrap_or_else(crate::theme::Theme::default_dark);
+    (theme.fg.r as u32) << 16 | (theme.fg.g as u32) << 8 | theme.fg.b as u32
 }
 
 /// Initialize GPU renderer with a CAMetalLayer pointer (macOS).

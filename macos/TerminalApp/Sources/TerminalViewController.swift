@@ -28,6 +28,17 @@ class TerminalViewController: NSViewController {
             terminalView.setupFont(family: family, size: size)
         }
 
+        // Apply theme colors
+        let bgRGB = term_session_theme_bg(session)
+        let bgColor = NSColor(
+            red: CGFloat((bgRGB >> 16) & 0xFF) / 255.0,
+            green: CGFloat((bgRGB >> 8) & 0xFF) / 255.0,
+            blue: CGFloat(bgRGB & 0xFF) / 255.0,
+            alpha: 1.0
+        )
+        terminalView.themeBgColor = bgColor.cgColor
+        view.window?.backgroundColor = bgColor
+
         let result = term_session_spawn_shell(session, nil)
         guard result == 0 else {
             NSLog("Failed to spawn shell")

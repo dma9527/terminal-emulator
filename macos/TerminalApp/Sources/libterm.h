@@ -48,6 +48,10 @@ int term_session_bracketed_paste(const TermSession* session);
 // Config
 float term_session_font_size(const TermSession* session);
 char* term_session_font_family(const TermSession* session);
+uint32_t term_session_window_width(const TermSession* session);
+uint32_t term_session_window_height(const TermSession* session);
+uint32_t term_session_theme_bg(const TermSession* session);
+uint32_t term_session_theme_fg(const TermSession* session);
 
 // GPU rendering
 int term_session_init_gpu(TermSession* session, void* metal_layer,

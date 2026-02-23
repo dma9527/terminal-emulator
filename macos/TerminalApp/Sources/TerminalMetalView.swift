@@ -11,6 +11,7 @@ class TerminalMetalView: NSView, CALayerDelegate {
     private var metalLayer: CAMetalLayer?
     private var gpuReady = false
     private var displayLink: CVDisplayLink?
+    var themeBgColor: CGColor = NSColor.black.cgColor
 
     // Font metrics — computed from actual font
     private(set) var cellWidth: CGFloat = 1
@@ -158,10 +159,32 @@ class TerminalMetalView: NSView, CALayerDelegate {
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        guard let session = session else { return super.performKeyEquivalent(with: event) }
+
         if event.modifierFlags.contains(.command) {
-            return super.performKeyEquivalent(with: event)
+            switch event.charactersIgnoringModifiers {
+            case "c": // Cmd+C — copy selection (TODO: selection support)
+                // For now, copy entire last line as placeholder
+                return true
+            case "v": // Cmd+V — paste
+                if let text = NSPasteboard.general.string(forType: .string) {
+                    let bracketedPaste = term_session_bracketed_paste(session) != 0
+                    var bytes: [UInt8]
+                    if bracketedPaste {
+                        bytes = Array("\u{1b}[200~".utf8) + Array(text.utf8) + Array("\u{1b}[201~".utf8)
+                    } else {
+                        bytes = Array(text.utf8)
+                    }
+                    bytes.withUnsafeBufferPointer { buf in
+                        _ = term_session_write_pty(session, buf.baseAddress!, UInt32(buf.count))
+                    }
+                }
+                return true
+            default:
+                break
+            }
         }
-        return false
+        return super.performKeyEquivalent(with: event)
     }
 
     // MARK: - CoreGraphics Fallback
@@ -171,7 +194,7 @@ class TerminalMetalView: NSView, CALayerDelegate {
         guard let ctx = NSGraphicsContext.current?.cgContext,
               let session = session else { return }
 
-        ctx.setFillColor(NSColor.black.cgColor)
+        ctx.setFillColor(themeBgColor)
         ctx.fill(bounds)
 
         var gridCols: UInt32 = 0
