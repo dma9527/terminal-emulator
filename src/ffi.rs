@@ -416,6 +416,18 @@ pub extern "C" fn term_session_next_prompt(session: *const TermSession, current_
     session.terminal.shell.next_prompt(current_row as usize).map(|r| r as c_int).unwrap_or(-1)
 }
 
+/// Get URL at grid position. Returns null if none. Caller must free.
+#[no_mangle]
+pub extern "C" fn term_session_url_at(
+    session: *const TermSession, row: c_uint, col: c_uint,
+) -> *mut c_char {
+    let session = unsafe { &*session };
+    match crate::url_detect::url_at(&session.terminal.grid, row as usize, col as usize) {
+        Some(url) => std::ffi::CString::new(url).unwrap_or_default().into_raw(),
+        None => std::ptr::null_mut(),
+    }
+}
+
 /// Poll for config changes. Returns new generation number if config changed, 0 if not.
 #[no_mangle]
 pub extern "C" fn term_session_poll_config(session: *mut TermSession) -> u64 {

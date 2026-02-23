@@ -157,11 +157,52 @@ class TerminalMetalView: NSView, CALayerDelegate {
     }
 
     override func mouseDown(with event: NSEvent) {
+        // Cmd+Click — open URL
+        if event.modifierFlags.contains(.command) {
+            if let session = self.session {
+                let pos = gridPosition(for: event)
+                let ptr = term_session_url_at(session, UInt32(pos.row), UInt32(pos.col))
+                if ptr != nil {
+                    let url = String(cString: ptr!)
+                    term_string_free(ptr!)
+                    if let nsurl = URL(string: url) {
+                        NSWorkspace.shared.open(nsurl)
+                        return
+                    }
+                }
+            }
+        }
+
         let pos = gridPosition(for: event)
         selectionStart = pos
         selectionEnd = pos
         isSelecting = true
         setNeedsDisplay(bounds)
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        guard let session = self.session, event.modifierFlags.contains(.command) else {
+            NSCursor.iBeam.set()
+            return
+        }
+        let pos = gridPosition(for: event)
+        let ptr = term_session_url_at(session, UInt32(pos.row), UInt32(pos.col))
+        if ptr != nil {
+            term_string_free(ptr!)
+            NSCursor.pointingHand.set()
+        } else {
+            NSCursor.iBeam.set()
+        }
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for area in trackingAreas { removeTrackingArea(area) }
+        addTrackingArea(NSTrackingArea(
+            rect: bounds,
+            options: [.mouseMoved, .activeInKeyWindow, .inVisibleRect],
+            owner: self
+        ))
     }
 
     override func mouseDragged(with event: NSEvent) {

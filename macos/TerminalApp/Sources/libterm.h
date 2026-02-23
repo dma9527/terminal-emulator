@@ -77,6 +77,9 @@ char* term_session_extract_text(const TermSession* session,
     uint32_t start_row, uint32_t start_col,
     uint32_t end_row, uint32_t end_col);
 
+// URL detection
+char* term_session_url_at(const TermSession* session, uint32_t row, uint32_t col);
+
 // GPU rendering
 int term_session_init_gpu(TermSession* session, void* metal_layer,
                           uint32_t width, uint32_t height);
