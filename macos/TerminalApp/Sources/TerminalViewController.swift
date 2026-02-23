@@ -69,6 +69,7 @@ class TerminalViewController: NSViewController {
         guard let session = session else { return }
         let bytesRead = term_session_read_pty(session)
         if bytesRead > 0 {
+            terminalView.scrollToBottom()
             terminalView.setNeedsDisplay(terminalView.bounds)
             updateTitle()
         } else if bytesRead < 0 {

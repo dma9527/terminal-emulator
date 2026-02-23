@@ -13,6 +13,9 @@ class TerminalMetalView: NSView, CALayerDelegate {
     private var displayLink: CVDisplayLink?
     var themeBgColor: CGColor = NSColor.black.cgColor
 
+    /// Scroll offset: 0 = bottom (live), positive = scrolled back N lines
+    private var scrollOffset: Int = 0
+
     // Font metrics — computed from actual font
     private(set) var cellWidth: CGFloat = 1
     private(set) var cellHeight: CGFloat = 1
@@ -111,6 +114,26 @@ class TerminalMetalView: NSView, CALayerDelegate {
             let w = UInt32(newSize.width * scale)
             let h = UInt32(newSize.height * scale)
             term_session_resize_gpu(session, w, h)
+        }
+    }
+
+    // MARK: - Scrolling
+
+    override func scrollWheel(with event: NSEvent) {
+        guard let session = session else { return }
+        let delta = Int(-event.scrollingDeltaY.rounded())
+        if delta == 0 { return }
+
+        let maxScroll = Int(term_session_scrollback_len(session))
+        scrollOffset = max(0, min(scrollOffset + delta, maxScroll))
+        setNeedsDisplay(bounds)
+    }
+
+    /// Reset scroll to bottom (called when new output arrives).
+    func scrollToBottom() {
+        if scrollOffset > 0 {
+            scrollOffset = 0
+            setNeedsDisplay(bounds)
         }
     }
 
@@ -298,13 +321,31 @@ class TerminalMetalView: NSView, CALayerDelegate {
         var gridRows: UInt32 = 0
         term_session_grid_size(session, &gridCols, &gridRows)
 
-        for row in 0..<Int(gridRows) {
+        let sbLen = Int(term_session_scrollback_len(session))
+        let visibleRows = Int(gridRows)
+
+        for screenRow in 0..<visibleRows {
+            let logicalRow = screenRow - scrollOffset
+
             for col in 0..<Int(gridCols) {
-                let codepoint = term_session_cell_char(session, UInt32(row), UInt32(col))
-                let bgRGB = term_session_cell_bg(session, UInt32(row), UInt32(col))
+                let codepoint: UInt32
+                let fgRGB: UInt32
+                let bgRGB: UInt32
+
+                if logicalRow < 0 {
+                    let sbRow = sbLen + logicalRow
+                    guard sbRow >= 0 && sbRow < sbLen else { continue }
+                    codepoint = term_session_scrollback_cell_char(session, UInt32(sbRow), UInt32(col))
+                    fgRGB = term_session_scrollback_cell_fg(session, UInt32(sbRow), UInt32(col))
+                    bgRGB = term_session_scrollback_cell_bg(session, UInt32(sbRow), UInt32(col))
+                } else if logicalRow < visibleRows {
+                    codepoint = term_session_cell_char(session, UInt32(logicalRow), UInt32(col))
+                    fgRGB = term_session_cell_fg(session, UInt32(logicalRow), UInt32(col))
+                    bgRGB = term_session_cell_bg(session, UInt32(logicalRow), UInt32(col))
+                } else { continue }
 
                 let x = CGFloat(col) * cellWidth
-                let y = CGFloat(row) * cellHeight
+                let y = CGFloat(screenRow) * cellHeight
 
                 if bgRGB != 0 {
                     ctx.setFillColor(colorFromRGB(bgRGB))
@@ -314,9 +355,7 @@ class TerminalMetalView: NSView, CALayerDelegate {
                 guard codepoint > 0x20 && codepoint != 0 else { continue }
                 guard let scalar = Unicode.Scalar(codepoint) else { continue }
 
-                let fgRGB = term_session_cell_fg(session, UInt32(row), UInt32(col))
                 let fgColor = colorFromRGB(fgRGB)
-
                 let attrs: [NSAttributedString.Key: Any] = [
                     .font: ctFont as Any,
                     .foregroundColor: NSColor(cgColor: fgColor) ?? NSColor.white,
@@ -325,7 +364,6 @@ class TerminalMetalView: NSView, CALayerDelegate {
                 let line = CTLineCreateWithAttributedString(attrStr)
 
                 ctx.saveGState()
-                // Baseline = top of cell + ascent (in flipped coords, need to flip for CG)
                 let baselineY = y + fontAscent
                 ctx.translateBy(x: x, y: baselineY)
                 ctx.scaleBy(x: 1.0, y: -1.0)
@@ -335,8 +373,8 @@ class TerminalMetalView: NSView, CALayerDelegate {
             }
         }
 
-        // Cursor
-        if term_session_cursor_visible(session) != 0 {
+        // Cursor — only when not scrolled back
+        if scrollOffset == 0 && term_session_cursor_visible(session) != 0 {
             var cursorRow: UInt32 = 0
             var cursorCol: UInt32 = 0
             term_session_cursor_pos(session, &cursorRow, &cursorCol)

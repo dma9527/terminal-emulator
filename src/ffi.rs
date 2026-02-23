@@ -307,6 +307,55 @@ pub extern "C" fn term_session_theme_fg(session: *const TermSession) -> u32 {
     (theme.fg.r as u32) << 16 | (theme.fg.g as u32) << 8 | theme.fg.b as u32
 }
 
+/// Get scrollback line count.
+#[no_mangle]
+pub extern "C" fn term_session_scrollback_len(session: *const TermSession) -> c_uint {
+    let session = unsafe { &*session };
+    session.terminal.grid.scrollback().len() as c_uint
+}
+
+/// Get cell char from scrollback. `sb_row` 0 = oldest line.
+#[no_mangle]
+pub extern "C" fn term_session_scrollback_cell_char(
+    session: *const TermSession, sb_row: c_uint, col: c_uint,
+) -> u32 {
+    let session = unsafe { &*session };
+    let sb = session.terminal.grid.scrollback();
+    let row = sb_row as usize;
+    let col = col as usize;
+    if row < sb.len() && col < sb[row].len() {
+        sb[row][col].ch as u32
+    } else { 0 }
+}
+
+/// Get cell fg from scrollback. Returns packed RGB.
+#[no_mangle]
+pub extern "C" fn term_session_scrollback_cell_fg(
+    session: *const TermSession, sb_row: c_uint, col: c_uint,
+) -> u32 {
+    let session = unsafe { &*session };
+    let sb = session.terminal.grid.scrollback();
+    let (row, col) = (sb_row as usize, col as usize);
+    if row < sb.len() && col < sb[row].len() {
+        let c = sb[row][col].fg;
+        (c.r as u32) << 16 | (c.g as u32) << 8 | c.b as u32
+    } else { 0 }
+}
+
+/// Get cell bg from scrollback. Returns packed RGB.
+#[no_mangle]
+pub extern "C" fn term_session_scrollback_cell_bg(
+    session: *const TermSession, sb_row: c_uint, col: c_uint,
+) -> u32 {
+    let session = unsafe { &*session };
+    let sb = session.terminal.grid.scrollback();
+    let (row, col) = (sb_row as usize, col as usize);
+    if row < sb.len() && col < sb[row].len() {
+        let c = sb[row][col].bg;
+        (c.r as u32) << 16 | (c.g as u32) << 8 | c.b as u32
+    } else { 0 }
+}
+
 /// Poll for config changes. Returns new generation number if config changed, 0 if not.
 #[no_mangle]
 pub extern "C" fn term_session_poll_config(session: *mut TermSession) -> u64 {

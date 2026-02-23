@@ -36,6 +36,12 @@ uint8_t  term_session_cell_attr(const TermSession* session, uint32_t row, uint32
 void term_session_cursor_pos(const TermSession* session, uint32_t* out_row, uint32_t* out_col);
 void term_session_grid_size(const TermSession* session, uint32_t* out_cols, uint32_t* out_rows);
 
+// Scrollback
+uint32_t term_session_scrollback_len(const TermSession* session);
+uint32_t term_session_scrollback_cell_char(const TermSession* session, uint32_t sb_row, uint32_t col);
+uint32_t term_session_scrollback_cell_fg(const TermSession* session, uint32_t sb_row, uint32_t col);
+uint32_t term_session_scrollback_cell_bg(const TermSession* session, uint32_t sb_row, uint32_t col);
+
 // Title
 char* term_session_title(const TermSession* session);
 void term_string_free(char* s);
