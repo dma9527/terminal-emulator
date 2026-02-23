@@ -80,6 +80,12 @@ char* term_session_extract_text(const TermSession* session,
 // URL detection
 char* term_session_url_at(const TermSession* session, uint32_t row, uint32_t col);
 
+// Search
+uint32_t term_session_search(TermSession* session, const char* pattern, int use_regex);
+int term_session_search_match_row(const TermSession* session, uint32_t idx);
+uint32_t term_session_search_match_col_start(const TermSession* session, uint32_t idx);
+uint32_t term_session_search_match_col_end(const TermSession* session, uint32_t idx);
+
 // GPU rendering
 int term_session_init_gpu(TermSession* session, void* metal_layer,
                           uint32_t width, uint32_t height);

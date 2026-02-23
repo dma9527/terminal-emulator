@@ -16,6 +16,12 @@ class TerminalMetalView: NSView, CALayerDelegate {
     /// Scroll offset: 0 = bottom (live), positive = scrolled back N lines
     private var scrollOffset: Int = 0
 
+    /// Search state
+    private(set) var searchActive = false
+    private var searchMatchCount: Int = 0
+    private var searchCurrentIndex: Int = 0
+    private var searchField: NSTextField?
+
     // Font metrics — computed from actual font
     private(set) var cellWidth: CGFloat = 1
     private(set) var cellHeight: CGFloat = 1
@@ -120,6 +126,113 @@ class TerminalMetalView: NSView, CALayerDelegate {
             let w = UInt32(newSize.width * scale)
             let h = UInt32(newSize.height * scale)
             term_session_resize_gpu(session, w, h)
+        }
+    }
+
+    // MARK: - Search
+
+    func toggleSearch() {
+        if searchActive {
+            closeSearch()
+        } else {
+            openSearch()
+        }
+    }
+
+    private func openSearch() {
+        searchActive = true
+        if searchField == nil {
+            let field = NSTextField(frame: .zero)
+            field.placeholderString = "Search..."
+            field.font = NSFont.systemFont(ofSize: 13)
+            field.target = self
+            field.action = #selector(searchFieldChanged)
+            field.bezelStyle = .roundedBezel
+            searchField = field
+            addSubview(field)
+        }
+        layoutSearchField()
+        searchField?.isHidden = false
+        window?.makeFirstResponder(searchField)
+    }
+
+    func closeSearch() {
+        searchActive = false
+        searchField?.isHidden = true
+        searchField?.stringValue = ""
+        searchMatchCount = 0
+        window?.makeFirstResponder(self)
+        setNeedsDisplay(bounds)
+    }
+
+    private func layoutSearchField() {
+        guard let field = searchField else { return }
+        let w: CGFloat = min(300, bounds.width - 20)
+        field.frame = NSRect(x: bounds.width - w - 10, y: 5, width: w, height: 24)
+    }
+
+    @objc private func searchFieldChanged() {
+        guard let session = self.session, let field = searchField else { return }
+        let query = field.stringValue
+        if query.isEmpty {
+            searchMatchCount = 0
+            setNeedsDisplay(bounds)
+            return
+        }
+        searchMatchCount = Int(term_session_search(session, query, 0))
+        searchCurrentIndex = 0
+        // Scroll to first match
+        if searchMatchCount > 0 {
+            let matchRow = term_session_search_match_row(session, 0)
+            if matchRow >= 0 {
+                let gridRows = rows
+                scrollOffset = max(0, gridRows - 1 - Int(matchRow))
+            }
+        }
+        setNeedsDisplay(bounds)
+    }
+
+    func searchNext() {
+        guard searchMatchCount > 0, let session = self.session else { return }
+        searchCurrentIndex = (searchCurrentIndex + 1) % searchMatchCount
+        let matchRow = term_session_search_match_row(session, UInt32(searchCurrentIndex))
+        if matchRow >= 0 {
+            scrollOffset = max(0, rows - 1 - Int(matchRow))
+        }
+        setNeedsDisplay(bounds)
+    }
+
+    func searchPrev() {
+        guard searchMatchCount > 0, let session = self.session else { return }
+        searchCurrentIndex = (searchCurrentIndex - 1 + searchMatchCount) % searchMatchCount
+        let matchRow = term_session_search_match_row(session, UInt32(searchCurrentIndex))
+        if matchRow >= 0 {
+            scrollOffset = max(0, rows - 1 - Int(matchRow))
+        }
+        setNeedsDisplay(bounds)
+    }
+
+    private func drawSearchHighlights(_ ctx: CGContext) {
+        guard searchMatchCount > 0, let session = self.session else { return }
+        for i in 0..<searchMatchCount {
+            let matchRow = Int(term_session_search_match_row(session, UInt32(i)))
+            let colStart = Int(term_session_search_match_col_start(session, UInt32(i)))
+            let colEnd = Int(term_session_search_match_col_end(session, UInt32(i)))
+
+            let screenRow = matchRow + scrollOffset
+            guard screenRow >= 0 && screenRow < rows else { continue }
+
+            let x = CGFloat(colStart) * cellWidth
+            let y = CGFloat(screenRow) * cellHeight
+            let w = CGFloat(colEnd - colStart) * cellWidth
+
+            let isActive = (i == searchCurrentIndex)
+            if isActive {
+                ctx.setFillColor(CGColor(red: 1.0, green: 0.8, blue: 0.0, alpha: 0.5))
+            } else {
+                ctx.setFillColor(CGColor(red: 1.0, green: 1.0, blue: 0.0, alpha: 0.25))
+            }
+            ctx.fill(CGRect(x: x, y: y, width: w, height: cellHeight))
         }
     }
 
@@ -328,7 +441,9 @@ class TerminalMetalView: NSView, CALayerDelegate {
         case 36:  writePTY([0x0d]); return
         case 51:  writePTY([0x7f]); return
         case 48:  writePTY([0x09]); return
-        case 53:  writePTY([0x1b]); return
+        case 53:
+            if searchActive { closeSearch(); return }
+            writePTY([0x1b]); return
         case 126: writePTY(Array((appMode ? "\u{1b}OA" : "\u{1b}[A").utf8)); return
         case 125: writePTY(Array((appMode ? "\u{1b}OB" : "\u{1b}[B").utf8)); return
         case 124: writePTY(Array((appMode ? "\u{1b}OC" : "\u{1b}[C").utf8)); return
@@ -379,6 +494,12 @@ class TerminalMetalView: NSView, CALayerDelegate {
             switch event.charactersIgnoringModifiers {
             case "c": // Cmd+C — copy selection
                 copySelection()
+                return true
+            case "f": // Cmd+F — search
+                toggleSearch()
+                return true
+            case "g": // Cmd+G — next match
+                searchNext()
                 return true
             case "v": // Cmd+V — paste
                 if let text = NSPasteboard.general.string(forType: .string) {
@@ -493,6 +614,9 @@ class TerminalMetalView: NSView, CALayerDelegate {
 
         // Command decorations (duration + exit code)
         drawCommandDecorations(ctx)
+
+        // Search highlights
+        drawSearchHighlights(ctx)
     }
 
     private func drawCommandDecorations(_ ctx: CGContext) {

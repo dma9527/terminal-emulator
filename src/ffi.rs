@@ -15,6 +15,8 @@ pub struct TermSession {
     config: crate::config::Config,
     watcher: crate::watcher::ConfigWatcher,
     config_generation: u64,
+    search_matches: Vec<crate::search::SearchMatch>,
+    search_index: usize,
 }
 
 /// GPU renderer state, initialized lazily when a Metal layer is provided.
@@ -40,6 +42,8 @@ pub extern "C" fn term_session_new(cols: c_uint, rows: c_uint) -> *mut TermSessi
         config,
         watcher: crate::watcher::ConfigWatcher::new(),
         config_generation: 0,
+        search_matches: Vec::new(),
+        search_index: 0,
     });
     Box::into_raw(session)
 }
@@ -414,6 +418,41 @@ pub extern "C" fn term_session_prev_prompt(session: *const TermSession, current_
 pub extern "C" fn term_session_next_prompt(session: *const TermSession, current_row: c_uint) -> c_int {
     let session = unsafe { &*session };
     session.terminal.shell.next_prompt(current_row as usize).map(|r| r as c_int).unwrap_or(-1)
+}
+
+/// Search grid for pattern. Returns match count.
+#[no_mangle]
+pub extern "C" fn term_session_search(
+    session: *mut TermSession, pattern: *const c_char, use_regex: c_int,
+) -> c_uint {
+    let session = unsafe { &mut *session };
+    let pattern = unsafe { CStr::from_ptr(pattern) }.to_str().unwrap_or("");
+    let matches = crate::search::search_all(&session.terminal.grid, pattern, use_regex != 0);
+    let count = matches.len() as c_uint;
+    session.search_matches = matches;
+    session.search_index = 0;
+    count
+}
+
+/// Get search match row at index.
+#[no_mangle]
+pub extern "C" fn term_session_search_match_row(session: *const TermSession, idx: c_uint) -> c_int {
+    let session = unsafe { &*session };
+    session.search_matches.get(idx as usize).map(|m| m.row).unwrap_or(-1)
+}
+
+/// Get search match col_start at index.
+#[no_mangle]
+pub extern "C" fn term_session_search_match_col_start(session: *const TermSession, idx: c_uint) -> c_uint {
+    let session = unsafe { &*session };
+    session.search_matches.get(idx as usize).map(|m| m.col_start as c_uint).unwrap_or(0)
+}
+
+/// Get search match col_end at index.
+#[no_mangle]
+pub extern "C" fn term_session_search_match_col_end(session: *const TermSession, idx: c_uint) -> c_uint {
+    let session = unsafe { &*session };
+    session.search_matches.get(idx as usize).map(|m| m.col_end as c_uint).unwrap_or(0)
 }
 
 /// Get URL at grid position. Returns null if none. Caller must free.
