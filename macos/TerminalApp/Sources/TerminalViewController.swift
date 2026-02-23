@@ -45,6 +45,7 @@ class TerminalViewController: NSViewController {
         addPane()
         splitView.adjustSubviews()
         for pane in panes { updatePaneSize(pane) }
+        view.window?.makeFirstResponder(panes[activePaneIndex].view)
     }
 
     func splitHorizontal() {
@@ -52,6 +53,7 @@ class TerminalViewController: NSViewController {
         addPane()
         splitView.adjustSubviews()
         for pane in panes { updatePaneSize(pane) }
+        view.window?.makeFirstResponder(panes[activePaneIndex].view)
     }
 
     func closeActivePane() {

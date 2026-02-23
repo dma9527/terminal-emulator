@@ -525,6 +525,12 @@ class TerminalMetalView: NSView, CALayerDelegate {
                 setupFont(family: fontFamily, size: fontSize)
                 (self.window?.contentViewController as? TerminalViewController)?.fontChanged()
                 return true
+            case "d" where !event.modifierFlags.contains(.shift): // Cmd+D split vertical
+                (self.window?.contentViewController as? TerminalViewController)?.splitVertical()
+                return true
+            case "d" where event.modifierFlags.contains(.shift): // Cmd+Shift+D split horizontal
+                (self.window?.contentViewController as? TerminalViewController)?.splitHorizontal()
+                return true
             default:
                 break
             }
