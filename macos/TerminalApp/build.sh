@@ -30,6 +30,7 @@ swiftc \
     Sources/AppDelegate.swift \
     Sources/TerminalWindowController.swift \
     Sources/TerminalViewController.swift \
+    Sources/TerminalPane.swift \
     Sources/TerminalMetalView.swift
 
 echo "==> Built: $SCRIPT_DIR/terminal"

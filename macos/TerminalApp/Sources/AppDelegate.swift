@@ -24,6 +24,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         fileMenuItem.submenu = fileMenu
         fileMenu.addItem(withTitle: "New Tab", action: #selector(TerminalWindowController.addNewTab), keyEquivalent: "t")
         fileMenu.addItem(withTitle: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        fileMenu.addItem(NSMenuItem.separator())
+
+        let splitV = NSMenuItem(title: "Split Pane Right", action: #selector(splitVertical), keyEquivalent: "d")
+        fileMenu.addItem(splitV)
+        let splitH = NSMenuItem(title: "Split Pane Down", action: #selector(splitHorizontal), keyEquivalent: "d")
+        splitH.keyEquivalentModifierMask = [.command, .shift]
+        fileMenu.addItem(splitH)
+        fileMenu.addItem(withTitle: "Close Pane", action: #selector(closePane), keyEquivalent: "w")
+        fileMenu.items.last?.keyEquivalentModifierMask = [.command, .shift]
 
         // Create initial window
         windowController = TerminalWindowController()
@@ -35,5 +44,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         return true
+    }
+
+    @objc func splitVertical() {
+        (NSApp.keyWindow?.contentViewController as? TerminalViewController)?.splitVertical()
+    }
+
+    @objc func splitHorizontal() {
+        (NSApp.keyWindow?.contentViewController as? TerminalViewController)?.splitHorizontal()
+    }
+
+    @objc func closePane() {
+        (NSApp.keyWindow?.contentViewController as? TerminalViewController)?.closeActivePane()
     }
 }
