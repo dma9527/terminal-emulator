@@ -196,45 +196,52 @@ class TerminalMetalView: NSView, CALayerDelegate {
 
     // MARK: - Keyboard
 
+    /// Pending marked text from IME (e.g. pinyin composing)
+    private var markedTextStr: String = ""
+    private var imeMarkedRange: NSRange = NSRange(location: NSNotFound, length: 0)
+
     override func keyDown(with event: NSEvent) {
         guard let session = session else { return }
 
-        var bytes: [UInt8]?
-        let appMode = term_session_cursor_keys_app(session) != 0
-
+        // Ctrl+key — handle directly, don't send to IME
         if event.modifierFlags.contains(.control), let chars = event.charactersIgnoringModifiers {
             if let scalar = chars.unicodeScalars.first,
                scalar.value >= 0x61 && scalar.value <= 0x7a {
-                bytes = [UInt8(scalar.value - 0x60)]
+                writePTY([UInt8(scalar.value - 0x60)])
+                return
             } else if chars == "c" || chars == "C" {
-                bytes = [0x03]
-            }
-        } else {
-            switch event.keyCode {
-            case 36:  bytes = [0x0d]
-            case 51:  bytes = [0x7f]
-            case 48:  bytes = [0x09]
-            case 53:  bytes = [0x1b]
-            case 126: bytes = Array((appMode ? "\u{1b}OA" : "\u{1b}[A").utf8)
-            case 125: bytes = Array((appMode ? "\u{1b}OB" : "\u{1b}[B").utf8)
-            case 124: bytes = Array((appMode ? "\u{1b}OC" : "\u{1b}[C").utf8)
-            case 123: bytes = Array((appMode ? "\u{1b}OD" : "\u{1b}[D").utf8)
-            case 115: bytes = Array((appMode ? "\u{1b}OH" : "\u{1b}[H").utf8)
-            case 119: bytes = Array((appMode ? "\u{1b}OF" : "\u{1b}[F").utf8)
-            case 116: bytes = Array("\u{1b}[5~".utf8)
-            case 121: bytes = Array("\u{1b}[6~".utf8)
-            case 117: bytes = Array("\u{1b}[3~".utf8)
-            default:
-                if let chars = event.characters {
-                    bytes = Array(chars.utf8)
-                }
+                writePTY([0x03])
+                return
             }
         }
 
-        if let bytes = bytes, !bytes.isEmpty {
-            bytes.withUnsafeBufferPointer { buf in
-                _ = term_session_write_pty(session, buf.baseAddress!, UInt32(buf.count))
-            }
+        // Special keys — handle directly
+        let appMode = term_session_cursor_keys_app(session) != 0
+        switch event.keyCode {
+        case 36:  writePTY([0x0d]); return
+        case 51:  writePTY([0x7f]); return
+        case 48:  writePTY([0x09]); return
+        case 53:  writePTY([0x1b]); return
+        case 126: writePTY(Array((appMode ? "\u{1b}OA" : "\u{1b}[A").utf8)); return
+        case 125: writePTY(Array((appMode ? "\u{1b}OB" : "\u{1b}[B").utf8)); return
+        case 124: writePTY(Array((appMode ? "\u{1b}OC" : "\u{1b}[C").utf8)); return
+        case 123: writePTY(Array((appMode ? "\u{1b}OD" : "\u{1b}[D").utf8)); return
+        case 115: writePTY(Array((appMode ? "\u{1b}OH" : "\u{1b}[H").utf8)); return
+        case 119: writePTY(Array((appMode ? "\u{1b}OF" : "\u{1b}[F").utf8)); return
+        case 116: writePTY(Array("\u{1b}[5~".utf8)); return
+        case 121: writePTY(Array("\u{1b}[6~".utf8)); return
+        case 117: writePTY(Array("\u{1b}[3~".utf8)); return
+        default: break
+        }
+
+        // All other keys → go through IME via interpretKeyEvents
+        interpretKeyEvents([event])
+    }
+
+    private func writePTY(_ bytes: [UInt8]) {
+        guard let session = session, !bytes.isEmpty else { return }
+        bytes.withUnsafeBufferPointer { buf in
+            _ = term_session_write_pty(session, buf.baseAddress!, UInt32(buf.count))
         }
     }
 
@@ -354,5 +361,66 @@ class TerminalMetalView: NSView, CALayerDelegate {
 
     deinit {
         if let dl = displayLink { CVDisplayLinkStop(dl) }
+    }
+}
+
+// MARK: - NSTextInputClient (IME support)
+extension TerminalMetalView: NSTextInputClient {
+    func insertText(_ string: Any, replacementRange: NSRange) {
+        let text: String
+        if let s = string as? String { text = s }
+        else if let s = string as? NSAttributedString { text = s.string }
+        else { return }
+
+        markedTextStr = ""
+        imeMarkedRange = NSRange(location: NSNotFound, length: 0)
+        writePTY(Array(text.utf8))
+    }
+
+    func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
+        if let s = string as? String { markedTextStr = s }
+        else if let s = string as? NSAttributedString { markedTextStr = s.string }
+        imeMarkedRange = NSRange(location: 0, length: markedTextStr.utf16.count)
+        setNeedsDisplay(bounds)
+    }
+
+    func unmarkText() {
+        markedTextStr = ""
+        imeMarkedRange = NSRange(location: NSNotFound, length: 0)
+    }
+
+    func selectedRange() -> NSRange {
+        NSRange(location: NSNotFound, length: 0)
+    }
+
+    func markedRange() -> NSRange {
+        imeMarkedRange
+    }
+
+    func hasMarkedText() -> Bool {
+        !markedTextStr.isEmpty
+    }
+
+    func attributedSubstring(forProposedRange range: NSRange, actualRange: NSRangePointer?) -> NSAttributedString? {
+        nil
+    }
+
+    func validAttributesForMarkedText() -> [NSAttributedString.Key] {
+        []
+    }
+
+    func firstRect(forCharacterRange range: NSRange, actualRange: NSRangePointer?) -> NSRect {
+        guard let session = session else { return .zero }
+        var cursorRow: UInt32 = 0
+        var cursorCol: UInt32 = 0
+        term_session_cursor_pos(session, &cursorRow, &cursorCol)
+        let x = CGFloat(cursorCol) * cellWidth
+        let y = CGFloat(cursorRow) * cellHeight + cellHeight
+        let screenPoint = window?.convertPoint(toScreen: convert(NSPoint(x: x, y: y), to: nil)) ?? .zero
+        return NSRect(x: screenPoint.x, y: screenPoint.y, width: cellWidth, height: cellHeight)
+    }
+
+    func characterIndex(for point: NSPoint) -> Int {
+        0
     }
 }
