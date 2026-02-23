@@ -261,6 +261,11 @@ class TerminalMetalView: NSView, CALayerDelegate {
         interpretKeyEvents([event])
     }
 
+    // Suppress unhandled selectors from interpretKeyEvents (prevents beep + garbage)
+    override func doCommand(by selector: Selector) {
+        // Intentionally empty
+    }
+
     private func writePTY(_ bytes: [UInt8]) {
         guard let session = session, !bytes.isEmpty else { return }
         bytes.withUnsafeBufferPointer { buf in
