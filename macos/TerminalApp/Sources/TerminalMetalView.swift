@@ -238,7 +238,13 @@ class TerminalMetalView: NSView, CALayerDelegate {
             }
         }
 
-        // Special keys — handle directly
+        // If IME is composing, let it handle everything (including Return)
+        if hasMarkedText() {
+            interpretKeyEvents([event])
+            return
+        }
+
+        // Special keys — handle directly (only when IME is NOT composing)
         let appMode = term_session_cursor_keys_app(session) != 0
         switch event.keyCode {
         case 36:  writePTY([0x0d]); return
