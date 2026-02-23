@@ -68,6 +68,8 @@ pub struct Terminal {
     pub osc133_data: Option<String>,
     /// OSC 52 clipboard data (latest)
     pub osc52_data: Option<String>,
+    /// Shell integration state
+    pub shell: crate::shell_integration::ShellIntegration,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -118,6 +120,7 @@ impl Terminal {
             osc7_cwd: None,
             osc133_data: None,
             osc52_data: None,
+            shell: crate::shell_integration::ShellIntegration::new(),
         }
     }
 
@@ -690,11 +693,13 @@ impl Terminal {
         if s.starts_with("7;") {
             if let Some(url) = s.strip_prefix("7;") {
                 self.osc7_cwd = Some(url.to_string());
+                self.shell.handle_osc7(url);
             }
         }
         // OSC 133 — shell integration (FinalTerm)
         if let Some(rest) = s.strip_prefix("133;") {
             self.osc133_data = Some(rest.to_string());
+            self.shell.handle_osc133(rest, self.grid.cursor_row);
         }
         // OSC 52 — clipboard
         if s.starts_with("52;") {

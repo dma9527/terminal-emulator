@@ -283,6 +283,42 @@ class TerminalMetalView: NSView, CALayerDelegate {
         guard let session = session else { return super.performKeyEquivalent(with: event) }
 
         if event.modifierFlags.contains(.command) {
+            // Cmd+Shift+Up/Down — prompt navigation
+            if event.modifierFlags.contains(.shift) {
+                switch event.keyCode {
+                case 126: // Up
+                    if let session = self.session {
+                        var curRow: UInt32 = 0
+                        var curCol: UInt32 = 0
+                        term_session_cursor_pos(session, &curRow, &curCol)
+                        let target = term_session_prev_prompt(session, curRow + UInt32(scrollOffset))
+                        if target >= 0 {
+                            let sbLen = Int(term_session_scrollback_len(session))
+                            let targetRow = Int(target)
+                            // Calculate scroll offset to show this prompt at top
+                            scrollOffset = max(0, min(sbLen, scrollOffset + Int(curRow) - targetRow))
+                            setNeedsDisplay(bounds)
+                        }
+                    }
+                    return true
+                case 125: // Down
+                    if let session = self.session {
+                        var curRow: UInt32 = 0
+                        var curCol: UInt32 = 0
+                        term_session_cursor_pos(session, &curRow, &curCol)
+                        let target = term_session_next_prompt(session, curRow >= UInt32(scrollOffset) ? curRow - UInt32(scrollOffset) : 0)
+                        if target >= 0 {
+                            scrollOffset = max(0, scrollOffset - (Int(target) - Int(curRow)))
+                            setNeedsDisplay(bounds)
+                        } else {
+                            scrollToBottom()
+                        }
+                    }
+                    return true
+                default: break
+                }
+            }
+
             switch event.charactersIgnoringModifiers {
             case "c": // Cmd+C — copy selection
                 copySelection()

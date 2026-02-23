@@ -62,6 +62,13 @@ uint32_t term_session_theme_fg(const TermSession* session);
 // Config hot-reload
 uint64_t term_session_poll_config(TermSession* session);
 
+// Shell integration
+int term_session_last_exit_code(const TermSession* session);
+uint32_t term_session_command_count(const TermSession* session);
+char* term_session_working_dir(const TermSession* session);
+int term_session_prev_prompt(const TermSession* session, uint32_t current_row);
+int term_session_next_prompt(const TermSession* session, uint32_t current_row);
+
 // Selection
 char* term_session_extract_text(const TermSession* session,
     uint32_t start_row, uint32_t start_col,

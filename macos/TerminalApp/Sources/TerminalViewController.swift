@@ -106,13 +106,35 @@ class TerminalViewController: NSViewController {
 
     private func updateTitle() {
         guard let session = session else { return }
-        let titlePtr = term_session_title(session)
-        if let titlePtr = titlePtr {
-            let title = String(cString: titlePtr)
-            term_string_free(titlePtr)
-            if !title.isEmpty {
-                view.window?.title = title
+
+        // Prefer working directory from shell integration
+        var title = ""
+        let dirPtr = term_session_working_dir(session)
+        if dirPtr != nil {
+            let dir = String(cString: dirPtr!)
+            term_string_free(dirPtr!)
+            if !dir.isEmpty {
+                title = (dir as NSString).lastPathComponent
             }
+        }
+
+        // Fall back to OSC title
+        if title.isEmpty {
+            if let titlePtr = term_session_title(session) {
+                let t = String(cString: titlePtr)
+                term_string_free(titlePtr)
+                if !t.isEmpty { title = t }
+            }
+        }
+
+        // Append exit code indicator for last command
+        let exitCode = term_session_last_exit_code(session)
+        if exitCode > 0 {
+            title += " ✘ \(exitCode)"
+        }
+
+        if !title.isEmpty {
+            view.window?.title = title
         }
     }
 

@@ -356,6 +356,42 @@ pub extern "C" fn term_session_scrollback_cell_bg(
     } else { 0 }
 }
 
+/// Get last command exit code (-1 if none).
+#[no_mangle]
+pub extern "C" fn term_session_last_exit_code(session: *const TermSession) -> c_int {
+    let session = unsafe { &*session };
+    session.terminal.shell.last_exit_code().unwrap_or(-1)
+}
+
+/// Get command count in shell integration history.
+#[no_mangle]
+pub extern "C" fn term_session_command_count(session: *const TermSession) -> c_uint {
+    let session = unsafe { &*session };
+    session.terminal.shell.history().len() as c_uint
+}
+
+/// Get working directory. Caller must free with term_string_free.
+#[no_mangle]
+pub extern "C" fn term_session_working_dir(session: *const TermSession) -> *mut c_char {
+    let session = unsafe { &*session };
+    let dir = &session.terminal.shell.working_dir;
+    std::ffi::CString::new(dir.as_str()).unwrap_or_default().into_raw()
+}
+
+/// Get previous prompt row from current position. Returns -1 if none.
+#[no_mangle]
+pub extern "C" fn term_session_prev_prompt(session: *const TermSession, current_row: c_uint) -> c_int {
+    let session = unsafe { &*session };
+    session.terminal.shell.prev_prompt(current_row as usize).map(|r| r as c_int).unwrap_or(-1)
+}
+
+/// Get next prompt row from current position. Returns -1 if none.
+#[no_mangle]
+pub extern "C" fn term_session_next_prompt(session: *const TermSession, current_row: c_uint) -> c_int {
+    let session = unsafe { &*session };
+    session.terminal.shell.next_prompt(current_row as usize).map(|r| r as c_int).unwrap_or(-1)
+}
+
 /// Poll for config changes. Returns new generation number if config changed, 0 if not.
 #[no_mangle]
 pub extern "C" fn term_session_poll_config(session: *mut TermSession) -> u64 {
